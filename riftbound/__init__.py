@@ -1,0 +1,1 @@
+"""Riftbound local singles planner."""

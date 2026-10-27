@@ -1,0 +1,7 @@
+# Fictional names for local validation, not real inventory
+[Deck A]
+3 Example Champion
+2x Example Spell
+[Deck B]
+2 Example Champion
+Example Unit {DEMO-001}

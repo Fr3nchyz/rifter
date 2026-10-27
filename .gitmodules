@@ -1,0 +1,3 @@
+[submodule "upstream/openrift"]
+	path = upstream/openrift
+	url = https://github.com/openriftapp/openrift.git
