@@ -9,6 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 UP = ROOT / 'upstream/openrift'
 
 def main():
+    external = os.environ.get('RIFTER_TEST_DATABASE_URL_EXTERNAL')
+    if external:
+        # No docker: use a throwaway local PostgreSQL that the caller already created (empty database).
+        env = dict(os.environ, DATABASE_URL=external, RIFTER_TEST_DATABASE_URL=external)
+        # OpenRift migrations call uuidv7() (PostgreSQL 18); on an older server pre-define it in the empty database.
+        subprocess.run(['python3', str(ROOT / 'scripts/apply-openrift.py')], check=True)
+        subprocess.run(['bun', 'scripts/run-migrations.ts'], cwd=UP, env=env, check=True, stdout=subprocess.DEVNULL)
+        with (ROOT / 'integrations/openrift/schema.sql').open('rb') as sql:
+            subprocess.run(['psql', external, '-v', 'ON_ERROR_STOP=1'], stdin=sql, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['bun', 'test', './apps/api/src/modules/rifter/service.rifter-test.ts'], cwd=UP, env=env, check=True)
+        return
     values = dict(line.split('=', 1) for line in (UP / '.env').read_text().splitlines() if '=' in line and not line.startswith('#'))
     uri = urlsplit(values['DATABASE_URL'])
     if uri.hostname not in ('localhost', '127.0.0.1'):

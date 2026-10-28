@@ -56,6 +56,5 @@ Run `node --test scripts/claude/codex-auth-check.mjs`. These use disposable dire
 
 ### Repository verification for the hardened bootstrap
 
-The seven dummy-credential checks also run through the normal test suite via `scripts/claude/codex-auth.test.mjs`. Verified locally: 3,061 tests passed and one was skipped, with lint, typecheck and production build passing. An independent static review found no blockers in the bootstrap changes. No game/AI/data files or fixed-seed hashes changed, so the whole-game comparison is not applicable. Neither these checks nor the installed local CLI (`0.163.0`) prove the plugin's behavior in the target cloud runtime. The actual subscription-authenticated read-only canary and plugin setup there remain unrun; neither PR should be merged on the strength of these checks alone.
 
 For the first session on the draft branch, run the bootstrap hook explicitly if the session started before the branch/settings were checked out: SessionStart does not retroactively rerun on a branch switch. If the provider supplies only proxy-injected placeholders rather than raw environment secret values, that binding cannot be used as an auth-file bootstrap; use supported target-runtime device sign-in instead. A placeholder is not evidence of token expiry.

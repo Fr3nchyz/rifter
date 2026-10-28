@@ -10,6 +10,8 @@ export default defineConfig({
   outputDir: ".local/browser-results",
   use: {
     baseURL: process.env.RIFTER_BASE_URL || "http://localhost:5173",
+    // API writes require an Origin header (integrations/openrift/api/routes.ts).
+    extraHTTPHeaders: { Origin: process.env.RIFTER_BASE_URL || "http://localhost:5173" },
     launchOptions: {
       executablePath:
         process.env.CHROMIUM_PATH ||

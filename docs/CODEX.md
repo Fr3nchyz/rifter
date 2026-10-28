@@ -11,12 +11,12 @@ flowchart LR
   C --> D["Claude reviews:<br/>gates,<br/>independent reviewer"]
   D -->|FIX FIRST| E["Findings in one @codex comment<br/>on the PR, or Claude<br/>fixes small ones"]
   E --> D
-  D -->|MERGE + green CI| F["Merge (owner's go, step 5),<br/>PLAN row updated, issue closed"]
+  D -->|MERGE + green CI| F["Merge (owner's go, step 5),<br/>issue closed"]
 ```
 
 1. **Issue.** Claude writes it from the `Codex task` template (`.github/ISSUE_TEMPLATE/codex-task.yml`): the spec ticket it implements, expected behaviour, acceptance criteria, required tests, the files in and out of scope, constraints and what the PR must report. Title `[codex] <ticket id>: <short name>`. An issue with the `codex-task` label that is open is **taken**: Claude's own builders skip that ticket.
-2. **Hand-off (automatic).** Claude makes a branch `codex/<ticket>` from `main` with one starter commit (the ticket's PLAN row marked "In progress (Codex, #N)"), opens a draft PR whose body starts with `Closes #N`, and comments on it: `@codex Implement issue #N (its full text is in this PR's description) on this branch, following AGENTS.md. Use <tier>.` Codex reads `AGENTS.md` at the repo root for the rules, gates and report format. OpenAI's GitHub integration page (https://learn.chatgpt.com/docs/third-party/github, read 2026-10-23) documents `@codex` only in pull request comments, hence the starter PR. Starter PR title: `<ticket id>: <short name> (Codex)`.
-   **While `@codex` is refused** (since 2026-10-23 the bot answers "create an environment for this repo" although the environment is published; the owner has asked OpenAI support), the owner starts the task from the Codex chat with one line instead of the comment: `Implement PR #<starter PR> in OWNER/REPO: the task is in its description. Follow AGENTS.md, push to its branch, post the report as a PR comment.` Claude gives the owner that line with the PR number. This route delivered #134 and #135. Claude stops posting `@codex` comments until support answers.
+2. **Hand-off (automatic).** Claude makes a branch `codex/<ticket>` from `main` with one starter commit (a note in `docs/CODEX.md` marking the issue "In progress"), opens a draft PR whose body starts with `Closes #N`, and comments on it: `@codex Implement issue #N (its full text is in this PR's description) on this branch, following AGENTS.md. Use <tier>.` Codex reads `AGENTS.md` at the repo root for the rules, gates and report format. OpenAI's GitHub integration page (https://learn.chatgpt.com/docs/third-party/github, read 2026-10-23) documents `@codex` only in pull request comments, hence the starter PR. Starter PR title: `<ticket id>: <short name> (Codex)`.
+   **If `@codex` is refused** (the bot answers "create an environment" even though one is published), the owner starts the task from the Codex chat instead: `Implement PR #<starter PR> in Fr3nchyz/rifter: the task is in its description. Follow AGENTS.md, push to its branch, post the report as a PR comment.` Claude gives the owner that line with the PR number.
 3. **Codex works** on that branch and pushes its commits there, then writes its report (the `AGENTS.md` sections) as a PR comment or in the PR body.
 4. **Review by Claude**, the same bar as any builder's PR (CLAUDE.md):
    - read the PR's "Remaining concerns" first; a design question goes to the owner, not guessed;
@@ -24,7 +24,7 @@ flowchart LR
    - run the independent read-only `reviewer` agent (sonnet for schema, undo/import or deployment changes);
    - run `npm run test:browser` for any web overlay change (Codex usually cannot);
    - findings go back in one `@codex` comment on the PR listing every FIX FIRST item. Small fixes (a doc row, a test name) Claude may push itself as new commits.
-5. **Merge.** The owner told the project manager to "merge it once CI is green" (recorded 2026-10-23; this is the owner's explicit exception to CLAUDE.md's "ask first before merging", and it covers Codex PRs): reviewer says MERGE, gates pass and CI is green on the exact head sha; Claude marks the PR ready and squash merges with the expected head sha. Then the PLAN row moves to Done and the issue closes.
+5. **Merge.** Only with the owner's go (CLAUDE.md): reviewer says MERGE, gates pass and CI is green on the exact head sha. Then the issue closes and the table below is updated.
 
 ## Which tickets go to Codex
 

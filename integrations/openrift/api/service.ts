@@ -208,7 +208,7 @@ export function createRifterService(databaseUrl: string) {
         }
         row.printingId = choice.printingId;
         // A zone change is the user's answer to an "Unknown section" warning.
-        if (choice.zone && choice.zone !== row.zone) row.parseWarning = null;
+        if (choice.zone && row.parseWarning?.startsWith("Unknown section")) row.parseWarning = null;
         if (choice.zone) row.zone = choice.zone;
         if (choice.condition !== undefined) row.condition = choice.condition;
         row.warning = choice.excluded

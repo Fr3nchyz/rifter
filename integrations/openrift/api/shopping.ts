@@ -65,7 +65,18 @@ export function createShopping(db: postgres.Sql) {
       }
     return { snapshot: snapshots[0] ?? null, refresh: active ?? null, progress };
   }
+  // One process serves the backend, so this flag closes the check-then-insert race.
+  let starting = false;
   async function refresh(user: string) {
+    if (starting) throw new RifterError(409, "Another refresh is starting; try again shortly");
+    starting = true;
+    try {
+      return await startRefresh(user);
+    } finally {
+      starting = false;
+    }
+  }
+  async function startRefresh(user: string) {
     await status(user);
     // Jobs stuck in 'running' (e.g. lost worker) must not block forever.
     await db`UPDATE rifter_stock_refreshes SET status='failed',error='Refresh timed out; previous snapshot retained',finished_at=now() WHERE status='running' AND created_at < now() - interval '30 minutes'`;
@@ -76,7 +87,7 @@ export function createShopping(db: postgres.Sql) {
     if (running.length >= 1 || jobs.size >= 1)
       throw new RifterError(409, "Another refresh is running; try again shortly");
     const [recent] =
-      await db`SELECT created_at FROM rifter_stock_refreshes WHERE user_id=${user} AND created_at > now() - interval '10 minutes' LIMIT 1`;
+      await db`SELECT created_at FROM rifter_stock_refreshes WHERE user_id=${user} AND status <> 'failed' AND created_at > now() - interval '10 minutes' LIMIT 1`;
     if (recent) throw new RifterError(429, "Refresh was run recently; wait 10 minutes between refreshes");
     const [job] =
       await db`INSERT INTO rifter_stock_refreshes(user_id,status) VALUES(${user},'running') RETURNING id`;

@@ -143,6 +143,7 @@ export function parseInput(
     warnings.push(...parsed.warnings);
   } else if (format === "text" || format === "acquisition") {
     let zone = "main";
+    let unknownSection: string | null = null;
     for (const line of raw.split(/\r?\n/u)) {
       const s = line.trim();
       if (!s) continue;
@@ -152,6 +153,13 @@ export function parseInput(
         .toLowerCase();
       if (zones[heading]) {
         zone = zones[heading];
+        unknownSection = null;
+        continue;
+      }
+      if (/^\[[^\]]+\]$/u.test(s)) {
+        // An unrecognised bracketed heading is a section, not a card line.
+        zone = "main";
+        unknownSection = s.slice(1, -1).trim();
         continue;
       }
       const m = /^(?:(\d+)\s*x?\s+)?(.+?)(?:\s+\{([^}]+)\})?$/iu.exec(s);
@@ -166,6 +174,9 @@ export function parseInput(
         ...(m[3] ? { code: m[3] } : {}),
         condition: null,
         metadata: {},
+        ...(unknownSection
+          ? { warning: "Unknown section: " + unknownSection + "; review zone before applying" }
+          : {}),
       });
     }
   } else {

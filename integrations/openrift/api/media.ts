@@ -5,8 +5,9 @@ const media = process.env.MEDIA_DIR ?? path.resolve(import.meta.dir, "../../../.
 const source = (process.env.CATALOG_SOURCE_URL ?? "https://openrift.app").replace(/\/$/u, "");
 const types: Record<string, string> = { ".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg" };
 
-const SAFE_PATH = /^cards\/[A-Za-z0-9_-]{1,80}(?:-\d{2,4}w)?\.(?:webp|png|jpg)$/u;
-const CATALOG_PATH = /^cards\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{2,4}w\.webp$/iu;
+// Public URLs are flat (packages/shared/src/image-url.ts); allow an optional 2-hex shard dir too.
+const SAFE_PATH = /^cards\/(?:[0-9a-f]{2}\/)?[A-Za-z0-9_-]{1,80}(?:-(?:\d{2,4}w|full))?\.(?:webp|png|jpg)$/u;
+const CATALOG_PATH = /^cards\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(?:120w|240w|400w|full)\.webp$/iu;
 const CACHE_LIMIT = 2 * 1024 ** 3;
 
 async function directorySize(dir: string): Promise<number> {
