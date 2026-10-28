@@ -22,4 +22,5 @@ jobs:
           python3 scripts/apply-openrift.py
           cd upstream/openrift
           bun install --frozen-lockfile
+          bun run --cwd apps/web routes:generate
           bun run typecheck --filter=api --filter=web
