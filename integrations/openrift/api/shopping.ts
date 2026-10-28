@@ -29,7 +29,10 @@ export function createShopping(db: postgres.Sql) {
     } catch {
       throw new RifterError(502, "Inventory adapter failed");
     }
-    if (code !== 0) throw new RifterError(400, result.error || "Invalid inventory");
+    if (code !== 0) {
+      if (result && typeof result.error === "string") throw new RifterError(400, result.error);
+      throw new RifterError(502, "Inventory adapter failed");
+    }
     return result;
   }
   async function snapshot(user: string, csv: string, coverage = "uploaded-unverified-coverage") {
@@ -64,6 +67,17 @@ export function createShopping(db: postgres.Sql) {
   }
   async function refresh(user: string) {
     await status(user);
+    // Jobs stuck in 'running' (e.g. lost worker) must not block forever.
+    await db`UPDATE rifter_stock_refreshes SET status='failed',error='Refresh timed out; previous snapshot retained',finished_at=now() WHERE status='running' AND created_at < now() - interval '30 minutes'`;
+    const running =
+      await db`SELECT user_id FROM rifter_stock_refreshes WHERE status='running'`;
+    if (running.some((r) => r.user_id === user))
+      throw new RifterError(409, "A refresh is already running");
+    if (running.length >= 1 || jobs.size >= 1)
+      throw new RifterError(409, "Another refresh is running; try again shortly");
+    const [recent] =
+      await db`SELECT created_at FROM rifter_stock_refreshes WHERE user_id=${user} AND created_at > now() - interval '10 minutes' LIMIT 1`;
+    if (recent) throw new RifterError(429, "Refresh was run recently; wait 10 minutes between refreshes");
     const [job] =
       await db`INSERT INTO rifter_stock_refreshes(user_id,status) VALUES(${user},'running') RETURNING id`;
     const directory = resolve(root, ".local/stock");

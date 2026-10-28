@@ -13,10 +13,14 @@ Bun.serve({
     if (!url.pathname.startsWith("/api/"))
       return new Response("Rifter backend. Open the configured Vercel app to sign in.", { status: 404 });
     try {
-      return await fetch("http://127.0.0.1:3000" + url.pathname + url.search, {
+      const upstream = await fetch("http://127.0.0.1:3000" + url.pathname + url.search, {
         method: req.method, headers: req.headers, body: req.body,
         redirect: "manual", signal: AbortSignal.timeout(60000),
       });
+      const headers = new Headers(upstream.headers);
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
     } catch {
       return new Response("Backend unavailable; please retry shortly.", {
         status: 503, headers: { "Retry-After": "2", "Cache-Control": "no-store" },

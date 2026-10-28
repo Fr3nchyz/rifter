@@ -25,6 +25,9 @@ def wire_api_routes():
             raise RuntimeError('OpenRift route wiring changed; review overlay before applying')
         text = text.replace(anchor, wire + '\n\n' + anchor)
     app.write_text(text)
+    final = app.read_text()
+    if marker not in final or wire not in final:
+        raise SystemExit('apply-openrift: Rifter route import or app.route wiring missing after patch')
 
 
 def apply(api_only=False):
@@ -113,6 +116,8 @@ def apply(api_only=False):
             raise RuntimeError('OpenRift navigation wiring changed; review required')
         text = text.replace(anchor, anchor + '\n' + entry)
     nav.write_text(text)
+    if entry not in nav.read_text():
+        raise SystemExit('apply-openrift: navigation patch not applied')
     # An unhydrated SSR form must not fall back to GET with credentials in the
     # URL. React handles the normal submit after hydration.
     for name in ('signup-form.tsx', 'login-form.tsx'):
@@ -120,6 +125,8 @@ def apply(api_only=False):
         text = form.read_text()
         if '<form onSubmit=' in text:
             text = text.replace('<form onSubmit=', '<form method="post" onSubmit=')
+        elif '<form method="post" onSubmit=' not in text:
+            raise SystemExit(f'apply-openrift: {name} form anchor not found and hardening not present; review overlay')
         form.write_text(text)
     print('Rifter overlay applied (API, shared contracts, /rifter workspace).')
 

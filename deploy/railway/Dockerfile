@@ -18,7 +18,6 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/secrets/proxy_ca,required=false 
     python3 scripts/apply-openrift.py --api-only; \
     bun pm cache rm
 ENV RIFTER_ROOT=/app APP_ENV=production
-VOLUME ["/app/.local"]
 EXPOSE 8080
 ENTRYPOINT ["tini", "--"]
 CMD ["python3", "/app/deploy/railway/start.py"]

@@ -7,9 +7,11 @@ CREATE TABLE IF NOT EXISTS rifter_imports (
  format text NOT NULL, destination jsonb NOT NULL CHECK (jsonb_typeof(destination)='object'),
  rows jsonb NOT NULL CHECK (jsonb_typeof(rows)='array'),
  warnings jsonb NOT NULL CHECK (jsonb_typeof(warnings)='array'),
- status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','applied')),
+ status text NOT NULL DEFAULT 'pending',
  revision integer NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now(), applied_at timestamptz
 );
+ALTER TABLE rifter_imports DROP CONSTRAINT IF EXISTS rifter_imports_status_check;
+ALTER TABLE rifter_imports ADD CONSTRAINT rifter_imports_status_check CHECK(status IN ('pending','applied','undone'));
 CREATE INDEX IF NOT EXISTS rifter_imports_owner ON rifter_imports(user_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS rifter_imports_fingerprint ON rifter_imports(user_id,fingerprint);
 CREATE TABLE IF NOT EXISTS rifter_deck_state (
@@ -23,6 +25,7 @@ CREATE TABLE IF NOT EXISTS rifter_actions (
  reverses uuid REFERENCES rifter_actions(id), created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(user_id,transaction_id), UNIQUE(reverses)
 );
+ALTER TABLE rifter_imports ADD COLUMN IF NOT EXISTS applied_action_id uuid REFERENCES rifter_actions(id) ON DELETE SET NULL;
 CREATE TABLE IF NOT EXISTS rifter_changes (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  action_id uuid NOT NULL REFERENCES rifter_actions(id) ON DELETE CASCADE,

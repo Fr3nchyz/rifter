@@ -150,7 +150,11 @@ python3 scripts/backup.py create
 python3 scripts/backup.py restore .local/backups/<archive>.tar.gz --database rifter_restore_recovery
 ```
 
-Backups contain the database **and secret auth configuration** and have mode
+For the hosted Supabase database use `python3 scripts/backup.py create --database-url`
+(see [Railway setup](RAILWAY.md#backups)); keep `BETTER_AUTH_SECRET` in a password
+manager because dumps do not contain it.
+
+Local backups contain the database **and secret auth configuration** and have mode
 0600. Keep them private; use encrypted storage when copying off the computer.
 Restoration creates a new database only; it never overwrites your current one.
 The restored auth configuration is saved under `.local/restored/<database>/`.

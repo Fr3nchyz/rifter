@@ -94,6 +94,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(result['allocations']), 1)
         self.assertEqual(result['allocations'][0]['variant_id'], '')
 
+    def test_malformed_targets_rejected(self):
+        for targets in ('x', {'name': 'a'}, ['x'], [1], [{'name': 'Example Card', 'count': True}],
+                        [{'name': 'Example Card', 'count': '3'}], [{'name': 'Example Card', 'count': 1.5}],
+                        [{'name': 'Example Card', 'count': -1}], [{'name': 'Example Card'}]):
+            with self.subTest(targets=targets):
+                with self.assertRaises(ValueError):
+                    handle({'operation': 'compare', 'csv': snapshot(), 'targets': targets})
+
+    def test_main_reports_json_error_nonzero(self):
+        import io, json, contextlib, sys
+        from riftbound import bridge
+        payload = json.dumps({'operation': 'compare', 'csv': snapshot(), 'targets': 'x'})
+        out = io.StringIO()
+        old = sys.stdin
+        sys.stdin = io.StringIO(payload)
+        try:
+            with contextlib.redirect_stdout(out):
+                code = bridge.main()
+        finally:
+            sys.stdin = old
+        self.assertNotEqual(code, 0)
+        self.assertIn('error', json.loads(out.getvalue()))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,0 +1,71 @@
+name: Codex task
+description: A bounded implementation ticket to hand off to Codex Cloud (see docs/CODEX.md)
+title: "[codex] "
+labels: ["codex-task"]
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: One or two sentences — what should exist when this is done, and the spec or ticket it implements.
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Model tier (docs/CODEX.md)
+      options:
+        - Light (small model, low effort)
+        - Standard (default model, medium effort)
+        - Heavy (top model, high effort)
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Expected behaviour
+      description: What the code does after the change, rule by rule,.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope / out of scope
+      description: Files Codex may create or edit, and anything it must leave alone.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist a reviewer can verify — specific commands, behaviours, numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required tests
+      description: The tests that must exist (file, what each pins).
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Standing guardrails (AGENTS.md has the full list).
+      value: |
+        - Follow AGENTS.md. Edit the overlay in integrations/openrift/, never the upstream/openrift submodule directly; apply with scripts/apply-openrift.py.
+        - Never commit credentials, .env files or anything under .local/.
+        - No direct push to main; open one PR from a branch. No merges, deploys, secrets or settings changes.
+        - Do not weaken, skip or delete tests to make CI pass.         - Only touch files relevant to this task. If the spec does not settle something, stop and ask in a draft PR.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: What the PR must report back
+      description: Claude reviews the PR against this.
+      value: |
+        The report (a comment on the starter PR, or the PR body) references this issue ("Closes #<this issue>") and has the AGENTS.md sections: what it does; files changed; rules and sources; tests added; gate results (`npm run gate`, OpenRift typecheck, test counts); remaining concerns.
+    validations:
+      required: true

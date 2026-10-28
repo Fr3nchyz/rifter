@@ -69,43 +69,31 @@ variables or frontend source.
 
 ## Backend configuration
 
-| Variable | Purpose |
-| --- | --- |
-| `APP_ENV=production` | Production API behavior. |
-| `DATABASE_URL` | Managed PostgreSQL connection. |
-| `BETTER_AUTH_SECRET` | Stable private auth signing secret. |
-| `BETTER_AUTH_URL` | The public **Vercel frontend** origin, not the backend origin. |
-| `CORS_ORIGIN` | The exact frontend origin permitted for credentialed requests. |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Real verification email delivery; local Mailpit cannot deliver to your inbox. |
-| `RIFTER_ROOT` | Backend path containing the Python package and writable private `.local/` working directory. |
+The backend (Railway) is documented only in [Railway setup](RAILWAY.md), which is
+the single source of truth for its variables, Supabase TLS (`sslmode=verify-full`,
+`SUPABASE_CA_PEM`), `RIFTER_DATABASE_PURPOSE=rifter`, SMTP, volume, initialization
+and backups. Do not copy those values here. The one link between the two:
+`BETTER_AUTH_URL` and `CORS_ORIGIN` on Railway must equal this project's public
+origin (`SITE_URL`), and `API_INTERNAL_URL` here must be the Railway domain.
 
 Use separate databases and secrets for staging and production. A changing Vercel
 preview URL is not automatically trusted by the backend: configure an exact
 chosen preview origin. Do not trust every project under `*.vercel.app`.
 
-Backend preparation still includes the upstream migrations, additive
-`integrations/openrift/schema.sql`, catalog initialization, backups and a
-production process entry point. The existing catalog sync intentionally refuses
-remote databases; that needs an explicit hosted initialization workflow.
+Hosted database initialization is handled by `hosted-init.ts` as Railway's
+pre-deploy step; the ordinary local catalog sync keeps its local-only guard.
 
 ### Using the existing Supabase account
 
-Use a dedicated Supabase project for Rifter and its PostgreSQL connection string
-on the backend. Choose a connection/pooler endpoint supported by that host and
-keep prepared statements disabled, as both existing database adapters already
-do. Use a direct or session-pooler connection for migrations. Supabase credentials
-and a live database have not been accessed or verified here.
+See RAILWAY.md steps 1 and 2 (dedicated project, session pooler, Data API off,
+Supabase CA). Never put a PostgreSQL password or service-role key in the browser.
+Keep native OpenRift/Better Auth accounts; replacing them with Supabase Auth would
+be a separate migration.
 
-Keep native OpenRift/Better Auth accounts initially; replacing them with Supabase
-Auth would be a separate migration. Never put a PostgreSQL password or service
-role key in the browser. Before loading personal data, verify that the new
-OpenRift tables are not readable through Supabase's public Data API: review
-grants/RLS for the Rifter project. The native API uses server-side PostgreSQL
-connections and enforces collection ownership there.
-
-Porkbun DNS changes come after a working Vercel staging deployment. Use the exact
-record Vercel gives for the chosen subdomain; leave the existing root site and
-email records intact. Neither service has been modified by this configuration.
+Porkbun DNS changes come after a working Vercel staging deployment: in Vercel add
+the domain under Project > Settings > Domains, then in Porkbun add the CNAME it
+shows (see RAILWAY.md "Connect Vercel and the domain"). Leave the existing root
+site and email records intact. Neither service has been modified by this configuration.
 
 ## Validation and remaining deployment work
 

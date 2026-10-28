@@ -11,13 +11,17 @@ import postgres from "postgres";
 
 import { parseInput } from "./parse.js";
 
+// Parse-time warning kept separately so a review choice cannot erase it.
+type StoredRow = RifterImportRow & { parseWarning?: string | null };
+const MAX_PENDING_IMPORTS = 50;
+const DISCARD_AFTER_DAYS = 30;
 type DB = postgres.Sql | postgres.TransactionSql;
 interface ImportRecord {
   id: string;
   user_id: string;
   status: string;
   revision: number;
-  rows: RifterImportRow[];
+  rows: StoredRow[];
   fingerprint: string;
   destination: RifterDestination;
   source: string;
@@ -115,7 +119,7 @@ export function createRifterService(databaseUrl: string) {
         ],
       };
     }
-    const rows: RifterImportRow[] = [];
+    const rows: StoredRow[] = [];
     for (const row of parsed.rows) {
       const found = await candidates(db, row);
       // Decks are gameplay identities unless a collector constraint was supplied.
@@ -129,6 +133,7 @@ export function createRifterService(databaseUrl: string) {
         candidates: found,
         printingId: found.length === 1 ? found[0]!.printingId : null,
         excluded: false,
+        parseWarning: row.warning ?? null,
         warning:
           row.warning ??
           (found.length
@@ -142,6 +147,15 @@ export function createRifterService(databaseUrl: string) {
       .update(input.format + "\n" + input.rawInput.trim().replace(/\r\n/gu, "\n"))
       .digest("hex");
     return await transaction(user, "Quarantine import", async (tx) => {
+      // Prune stale discarded drafts, then cap unconfirmed drafts per user.
+      await tx`DELETE FROM rifter_imports WHERE user_id=${user} AND status='pending' AND created_at < now() - make_interval(days => ${DISCARD_AFTER_DAYS})`;
+      const [pending] =
+        await tx`SELECT count(*)::int AS n FROM rifter_imports WHERE user_id=${user} AND status='pending'`;
+      if ((pending?.n ?? 0) >= MAX_PENDING_IMPORTS)
+        throw new RifterError(
+          429,
+          `Too many unconfirmed imports (limit ${MAX_PENDING_IMPORTS}); apply or discard some first`,
+        );
       const [item] =
         await tx`INSERT INTO rifter_imports(user_id,raw_input,source,fingerprint,format,destination,rows,warnings)
         VALUES(${user},${input.rawInput},${input.source},${fingerprint},${input.format},${tx.json(input.destination)},${tx.json(jsonValue(rows))},${tx.json(parsed.warnings)}) RETURNING *`;
@@ -175,7 +189,7 @@ export function createRifterService(databaseUrl: string) {
       const item = await getImport(tx, user, id, true);
       if (item.status !== "pending" || item.revision !== input.revision)
         fail("Import changed; reload before reviewing");
-      const rows: RifterImportRow[] = item.rows;
+      const rows: StoredRow[] = item.rows;
       if (new Set(input.choices.map((c) => c.index)).size !== input.choices.length)
         fail("Duplicate review row");
       for (const choice of input.choices) {
@@ -193,11 +207,15 @@ export function createRifterService(databaseUrl: string) {
             row.candidates.push(found[0] as unknown as RifterCandidate);
         }
         row.printingId = choice.printingId;
+        // A zone change is the user's answer to an "Unknown section" warning.
+        if (choice.zone && choice.zone !== row.zone) row.parseWarning = null;
         if (choice.zone) row.zone = choice.zone;
         if (choice.condition !== undefined) row.condition = choice.condition;
         row.warning = choice.excluded
           ? "Explicitly excluded"
-          : choice.printingId
+          : row.parseWarning
+            ? row.parseWarning
+            : choice.printingId
             ? null
             : "Unresolved";
         if (
@@ -272,9 +290,9 @@ export function createRifterService(databaseUrl: string) {
             ON CONFLICT(deck_id,card_id,zone,preferred_printing_id) DO UPDATE SET quantity=deck_cards.quantity+EXCLUDED.quantity`;
         }
       }
-      await tx`UPDATE rifter_imports SET status='applied',applied_at=now(),revision=revision+1 WHERE id=${id}`;
       const [action] =
         await tx`SELECT id FROM rifter_actions WHERE user_id=${user} AND transaction_id=pg_current_xact_id()`;
+      await tx`UPDATE rifter_imports SET status='applied',applied_at=now(),applied_action_id=${action?.id ?? null},revision=revision+1 WHERE id=${id}`;
       return { id, status: "applied", deckId, actionId: action?.id };
     });
   }
@@ -361,8 +379,16 @@ export function createRifterService(databaseUrl: string) {
         return { id, status };
       }),
     undo: (user: string, id: string) =>
+      // Tradeoff: rifter_undo takes a table-wide SHARE ROW EXCLUSIVE lock on the
+      // audited tables, briefly blocking all users' writes, in exchange for a
+      // simple race-free compare-and-restore. Revisit if undo volume grows.
       transaction(user, "Undo action", async (tx) => {
         const [row] = await tx`SELECT rifter_undo(${id}::uuid,${user}) AS id`;
+        // Keep the import in step: undoing its apply action makes it re-appliable;
+        // undoing that undo (redo) marks it applied again.
+        await tx`UPDATE rifter_imports SET status='undone',revision=revision+1 WHERE user_id=${user} AND status='applied' AND applied_action_id=${id}::uuid`;
+        await tx`UPDATE rifter_imports SET status='applied',revision=revision+1 WHERE user_id=${user} AND status='undone'
+          AND applied_action_id=(SELECT reverses FROM rifter_actions WHERE id=${id}::uuid AND user_id=${user})`;
         return row;
       }),
   };

@@ -16,8 +16,42 @@ from urllib.request import urlopen
 
 ROOT = Path(os.environ.get("RIFTER_ROOT", "/app"))
 UP = ROOT / "upstream/openrift"
-API_PORT = 3000
 GATEWAY_PORT = int(os.environ.get("PORT", "8080"))
+CA_FILE = Path(os.environ.get("RIFTER_CA_FILE", "/tmp/supabase-ca.pem"))
+
+
+def pick_api_port() -> int:
+    """Internal API port: never equal to Railway's PORT."""
+    configured = int(os.environ.get("RIFTER_API_PORT", "3000"))
+    if configured != GATEWAY_PORT:
+        return configured
+    return 3001 if GATEWAY_PORT != 3001 else 3002
+
+
+API_PORT = pick_api_port()
+
+
+def install_database_ca() -> None:
+    """If SUPABASE_CA_PEM holds PEM text, trust it for verify-full TLS."""
+    pem = os.environ.get("SUPABASE_CA_PEM", "").strip()
+    if not pem:
+        return
+    if "BEGIN CERTIFICATE" not in pem:
+        raise RuntimeError("SUPABASE_CA_PEM does not look like PEM text (no BEGIN CERTIFICATE)")
+    pem = pem.replace("\\n", "\n")
+    CA_FILE.write_text(pem + "\n")
+    CA_FILE.chmod(0o600)
+    os.environ["PGSSLROOTCERT"] = str(CA_FILE)
+    os.environ["NODE_EXTRA_CA_CERTS"] = str(CA_FILE)
+    print(f"Database CA installed at {CA_FILE}", flush=True)
+
+
+def pre_deploy() -> int:
+    """Railway pre-deploy: install the CA, then initialise the hosted database."""
+    install_database_ca()
+    return subprocess.call(
+        ["bun", "apps/api/src/modules/rifter/hosted-init.ts", "--catalog-if-empty"], cwd=UP
+    )
 STARTUP_TIMEOUT = int(os.environ.get("RIFTER_STARTUP_TIMEOUT", "300"))
 children: list[tuple[str, subprocess.Popen[bytes]]] = []
 stopping = False
@@ -105,9 +139,12 @@ def shutdown() -> None:
 
 
 def main() -> int:
+    if "--pre-deploy" in sys.argv:
+        return pre_deploy()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
+        install_database_ca()
         ensure_media_link()
         launch("OpenRift API", ["bun", "apps/api/src/index.ts"], API_PORT)
         wait_for_catalog(API_PORT, "OpenRift API")

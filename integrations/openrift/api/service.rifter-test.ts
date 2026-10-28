@@ -350,3 +350,55 @@ test("double-faced printings can cover either card without counting the physical
   expect(gaps.reduce((n, r) => n + r.owned, 0)).toBe(owned);
   expect(gaps.length).toBe(2);
 });
+test("undoing an applied import makes it re-appliable", async () => {
+  const before = await count(),
+    p = await staged("2 TST-001");
+  const applied = await service.confirm(user, p.id, { revision: p.revision, acknowledgeDuplicate: true });
+  await service.undo(user, applied.actionId);
+  expect(await count()).toBe(before);
+  const undone = await service.import(user, p.id);
+  expect(undone.status).toBe("undone");
+  const again = await service.confirm(user, p.id, {
+    revision: undone.revision,
+    acknowledgeDuplicate: true,
+  });
+  expect(again.status).toBe("applied");
+  expect(await count()).toBe(before + 2);
+});
+test("choosing a printing keeps parse-time warnings unless the zone changes", async () => {
+  const p = await service.preview(user, {
+    rawInput: "[Bogus Section]\n1 TST-001",
+    source: "Fixture",
+    format: "text",
+    destination: { kind: "new-deck", name: "Warn", status: "aspiring" },
+  });
+  expect(p!.rows[0].warning).toContain("Unknown section");
+  const r = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [{ index: 0, printingId: printing, excluded: false }],
+  });
+  expect(r!.rows[0].warning).toContain("Unknown section");
+  await expect(
+    service.confirm(user, p!.id, { revision: r!.revision, acknowledgeDuplicate: true }),
+  ).rejects.toThrow("Resolve or explicitly exclude");
+  const fixed = await service.review(user, p!.id, {
+    revision: r!.revision,
+    choices: [{ index: 0, printingId: printing, excluded: false, zone: "main" }],
+  });
+  expect(fixed!.rows[0].warning).toBeNull();
+});
+test("pending imports are capped per user", async () => {
+  await sql`DELETE FROM rifter_imports WHERE user_id=${other}`;
+  for (let i = 0; i < 50; i++)
+    await sql`INSERT INTO rifter_imports(user_id,raw_input,source,fingerprint,format,destination,rows,warnings)
+      VALUES(${other},'x','s','f'||${i},'text','{}'::jsonb,'[]'::jsonb,'[]'::jsonb)`;
+  await expect(
+    service.preview(other, {
+      rawInput: "1 TST-001",
+      source: "Fixture",
+      format: "text",
+      destination: { kind: "new-deck", name: "Cap", status: "aspiring" },
+    }),
+  ).rejects.toThrow("Too many unconfirmed imports");
+  await sql`DELETE FROM rifter_imports WHERE user_id=${other}`;
+});

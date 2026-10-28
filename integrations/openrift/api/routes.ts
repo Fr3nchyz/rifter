@@ -26,6 +26,9 @@ export function createRifterRoutes(databaseUrl: string) {
     if (!["GET", "HEAD"].includes(c.req.method)) {
       const origin = c.req.header("origin");
       const forwarded = c.req.header("host");
+      const fetchSite = c.req.header("sec-fetch-site");
+      if (!origin && fetchSite !== "same-origin")
+        return c.json({ error: "Origin required" }, 403);
       if (origin) {
         let trusted = false;
         try {

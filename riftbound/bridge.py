@@ -19,10 +19,13 @@ def handle(data):
     if data.get('operation') == 'validate':
         return {'records': len(products), 'warnings': warnings}
     targets = data.get('targets', [])
+    if not isinstance(targets, list) or not all(isinstance(target, dict) for target in targets):
+        raise ValueError('Shopping targets must be a list of objects')
     if len(targets) > 500:
         raise ValueError('Too many shopping targets')
     for target in targets:
-        if not isinstance(target.get('count'), int) or not 0 <= target['count'] <= 5000:
+        count = target.get('count')
+        if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 5000:
             raise ValueError('Invalid shopping quantity')
         target.setdefault('code', '')
     for record in records:
@@ -40,7 +43,7 @@ def main():
     try:
         data = json.loads(sys.stdin.read(6_000_001))
         print(json.dumps(handle(data), default=str))
-    except (ValueError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
         print(json.dumps({'error': str(error)}))
         return 1
     return 0

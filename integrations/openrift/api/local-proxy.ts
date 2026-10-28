@@ -17,12 +17,16 @@ const server = Bun.serve({
       ? "http://127.0.0.1:3000"
       : "http://127.0.0.1:5174";
     try {
-      return await fetch(target + url.pathname + url.search, {
+      const upstream = await fetch(target + url.pathname + url.search, {
         method: req.method,
         headers: req.headers,
         body: req.body,
         redirect: "manual",
       });
+      const headers = new Headers(upstream.headers);
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
     } catch {
       return new Response("The app is starting. Please try again shortly.", {
         status: 503,

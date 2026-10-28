@@ -2,7 +2,9 @@
 -- authenticated API, so the native application tables/functions must not be
 -- callable by Supabase's public, anon, or authenticated roles.
 -- Run before migrations to set defaults, and after migrations to harden the
--- objects already created by the migration role. This does not enable RLS.
+-- objects already created by the migration role. It also enables RLS (no
+-- policies) on every public table as a PostgREST backstop; the owner role
+-- bypasses RLS because FORCE is deliberately not used.
 DO $hosted_access$
 DECLARE
   migration_role oid := (SELECT oid FROM pg_roles WHERE rolname = current_user);
@@ -119,6 +121,13 @@ BEGIN
         grantee.rolname
       );
     END LOOP;
+  END LOOP;
+
+  FOR object IN
+    SELECT schemaname, tablename FROM pg_tables
+    WHERE schemaname = 'public' AND tableowner = current_user AND NOT rowsecurity
+  LOOP
+    EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', object.schemaname, object.tablename);
   END LOOP;
 END;
 $hosted_access$;
