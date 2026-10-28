@@ -1,0 +1,16 @@
+{
+  "name": "rifter-workspace",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test:browser": "playwright test",
+    "test:database": "python3 scripts/test-rifter.py",
+    "gate": "python3 -m unittest discover -s tests -q && python3 -m py_compile scripts/*.py deploy/railway/start.py riftbound/*.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

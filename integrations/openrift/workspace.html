@@ -1,0 +1,1313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Rifter · Your next deck starts here</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101816;
+        --panel: #192420;
+        --line: #34463b;
+        --muted: #b3c4b8;
+        --accent: #c5f178;
+        font:
+          15px/1.55 system-ui,
+          sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: #f1f5ec;
+      }
+      main {
+        max-width: 1200px;
+        margin: auto;
+        padding: 26px 24px 80px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 22px;
+      }
+      .brand {
+        letter-spacing: 0.2em;
+        font-weight: 800;
+        color: var(--accent);
+      }
+      h1 {
+        font-size: clamp(28px, 5vw, 44px);
+        line-height: 1.15;
+        margin: 10px 0;
+      }
+      h2 {
+        font-size: 22px;
+        margin: 0 0 14px;
+      }
+      h3 {
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 8px 0 16px;
+      }
+      .muted,
+      small {
+        color: var(--muted);
+      }
+      nav {
+        display: flex;
+        gap: 8px;
+        overflow: auto;
+        padding: 20px 0;
+      }
+      button,
+      .link {
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #223329;
+        color: inherit;
+        padding: 10px 16px;
+        cursor: pointer;
+        min-height: 44px;
+      }
+      button:hover,
+      .link:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: wait;
+      }
+      button.primary,
+      nav button[aria-selected="true"] {
+        background: var(--accent);
+        color: #192313;
+        border-color: var(--accent);
+        font-weight: 650;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .links {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .stat {
+        font-size: 30px;
+        font-weight: 700;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        font-weight: 550;
+        margin: 12px 0 6px;
+      }
+      input,
+      select,
+      textarea {
+        font: inherit;
+        background: #111c17;
+        border: 1px solid #486050;
+        border-radius: 7px;
+        color: inherit;
+        padding: 10px;
+        max-width: 100%;
+        min-height: 44px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 180px;
+        resize: vertical;
+      }
+      input:not([type="checkbox"]),
+      select {
+        width: 100%;
+      }
+      input[type="checkbox"] {
+        min-height: auto;
+        accent-color: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .row > * {
+        flex: 1;
+        min-width: 120px;
+      }
+      .row button {
+        flex: 0 0 auto;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 3px 9px;
+        border: 1px solid #506547;
+        border-radius: 30px;
+        font-size: 12px;
+        color: var(--accent);
+      }
+      .warn {
+        color: #ffce8c;
+      }
+      .error {
+        background: #422821;
+        border: 1px solid #a76148;
+        padding: 12px;
+        border-radius: 8px;
+      }
+      .notice {
+        border-left: 3px solid var(--accent);
+        padding: 12px;
+        background: #213025;
+      }
+      #message {
+        position: sticky;
+        top: 8px;
+        z-index: 2;
+      }
+      #message:empty {
+        display: none;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+      }
+      th,
+      td {
+        padding: 12px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .scroll {
+        overflow: auto;
+      }
+      .entry {
+        padding: 16px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .entry:first-child {
+        padding-top: 0;
+      }
+      .entry select {
+        margin: 8px 0;
+      }
+      .empty {
+        padding: 32px 10px;
+        text-align: center;
+        color: var(--muted);
+      }
+      details {
+        margin: 16px 0;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 250px;
+        overflow: auto;
+        font-size: 12px;
+      }
+      footer {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 30px;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      @media (max-width: 600px) {
+        main {
+          padding: 18px 14px 60px;
+        }
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .card {
+          padding: 16px;
+        }
+        nav button {
+          white-space: nowrap;
+          padding: 9px 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <div class="brand">RIFTER / COLLECTION WORKSPACE</div>
+          <h1>Your collection. Your next deck.</h1>
+          <span class="muted"
+            >Collect with confidence. Review every import. Keep every change.</span
+          >
+        </div>
+        <div class="links">
+          <a href="/collections" target="_top">Collections ↗</a
+          ><a href="/decks" target="_top">Deck builder ↗</a
+          ><a id="account-link" href="/login?redirect=%2Frifter" target="_top">Sign in</a>
+        </div>
+      </header>
+      <div id="message" role="status" aria-live="polite"></div>
+      <nav aria-label="Workspace">
+        <button data-tab="home">Overview</button><button data-tab="quick">Quick entry</button
+        ><button data-tab="imports">Import inbox</button><button data-tab="decks">Deck gaps</button
+        ><button data-tab="history">History</button><button data-tab="shopping">Shopping</button>
+      </nav>
+      <section id="content" aria-live="polite"></section>
+      <footer>
+        Private collection workspace · Card ownership is reused independently between decks · No
+        automatic store polling or purchases
+      </footer>
+    </main>
+    <script>
+      "use strict";
+      if (location.protocol === "file:") {
+        const panel = document.createElement("section");
+        panel.className = "card";
+        const title = document.createElement("h1");
+        title.textContent = "Start the app to open your collection";
+        const explanation = document.createElement("p");
+        explanation.textContent = "This HTML file is part of Rifter, not a standalone app. Your collections, decks and history need the OpenRift server and PostgreSQL database.";
+        const steps = document.createElement("p");
+        steps.textContent = "From the rifter project folder, run setup once, then start the app:";
+        const commands = document.createElement("pre");
+        commands.textContent = "python3 scripts/setup.py\npython3 scripts/app.py start\npython3 scripts/app.py status";
+        const next = document.createElement("p");
+        next.textContent = "Open the configured app address in your browser, then sign in. Opening this file directly cannot load or save cards.";
+        const guide = document.createElement("a");
+        guide.textContent = "Read the setup guide";
+        guide.href = "../../docs/RIFTER_APP.md";
+        panel.append(title, explanation, steps, commands, next, guide);
+        document.querySelector("main").replaceChildren(panel);
+      } else {
+      const API = "/api/v1/rifter";
+      let fieldSequence = 0;
+      if (new URLSearchParams(location.search).has("embedded")) {
+        document.querySelector("header").style.display = "none";
+        document.querySelector("nav").style.display = "none";
+        document.querySelector("footer").style.display = "none";
+        document.querySelector("main").style.padding = "8px 4px 24px";
+      }
+      let state = null,
+        tab = ["quick", "imports", "history", "shopping", "decks"].includes(location.hash.slice(1))
+          ? location.hash.slice(1)
+          : "home",
+        loadError = null,
+        loading = true,
+        current = null,
+        batch = [],
+        quickResults = [],
+        quickQuery = "",
+        selectedDeck = null;
+      const $ = (s) => document.querySelector(s);
+      function el(tag, text, cls) {
+        const node = document.createElement(tag);
+        if (text !== undefined && text !== null) node.textContent = String(text);
+        if (cls) node.className = cls;
+        return node;
+      }
+      function box(title, description) {
+        const c = el("div", null, "card");
+        if (title) c.append(el("h2", title));
+        if (description) c.append(el("p", description, "muted"));
+        return c;
+      }
+      function button(text, fn, primary = false) {
+        const b = el("button", text, primary ? "primary" : "");
+        b.type = "button";
+        b.onclick = () =>
+          run(async () => {
+            b.disabled = true;
+            try {
+              await fn();
+            } finally {
+              b.disabled = false;
+            }
+          });
+        return b;
+      }
+      function link(text, path) {
+        const a = el("a", text);
+        a.href = path;
+        a.target = "_top";
+        return a;
+      }
+      function select(options, value) {
+        const s = el("select");
+        for (const [id, label] of options) {
+          const o = el("option", label);
+          o.value = id;
+          s.append(o);
+        }
+        if (value !== undefined) s.value = value;
+        return s;
+      }
+      function field(parent, label, node) {
+        const l = el("label", label);
+        const id = "field-" + ++fieldSequence;
+        l.htmlFor = id;
+        node.id = id;
+        parent.append(l, node);
+        return node;
+      }
+      function input(value = "", type = "text") {
+        const i = el("input");
+        i.type = type;
+        i.value = value;
+        return i;
+      }
+      function check(parent, text) {
+        const l = el("label");
+        const i = input("", "checkbox");
+        l.append(i, document.createTextNode(" " + text));
+        parent.append(l);
+        return i;
+      }
+      async function api(path, method = "GET", data) {
+        const response = await fetch(API + path, {
+          method,
+          headers: data === undefined ? {} : { "Content-Type": "application/json" },
+          body: data === undefined ? undefined : JSON.stringify(data),
+        });
+        if (!response.headers.get("content-type")?.includes("application/json"))
+          throw Error(
+            "The collection API is not available at this address. Open this tool from the running OpenRift app.",
+          );
+        const result = await response.json();
+        if (!response.ok) throw Error(result.error || "Request failed");
+        if (window.parent !== window && method !== "GET" && /\/(confirm|undo|status)$/u.test(path))
+          window.parent.postMessage({ type: "rifter:changed" }, location.origin);
+        return result;
+      }
+      async function run(fn) {
+        $("#message").replaceChildren();
+        try {
+          await fn();
+        } catch (error) {
+          $("#message").append(el("p", error.message, "error"));
+        }
+      }
+      async function load() {
+        loading = true;
+        loadError = null;
+        render();
+        try {
+          state = await api("/overview");
+        } catch (error) {
+          state = null;
+          loadError = error.message || "The collection service could not be reached.";
+        } finally {
+          loading = false;
+          render();
+        }
+      }
+      function switchTab(next) {
+        tab = next;
+        current = null;
+        render();
+      }
+      document
+        .querySelectorAll("[data-tab]")
+        .forEach((b) => (b.onclick = () => run(() => switchTab(b.dataset.tab))));
+      function render() {
+        document
+          .querySelectorAll("[data-tab]")
+          .forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+        const content = $("#content");
+        content.replaceChildren();
+        const account = $("#account-link");
+        account.textContent = state ? "Account" : "Sign in";
+        account.href = state ? "/profile" : "/login?redirect=%2Frifter";
+        if (!state) {
+          const titles = {
+            home: "Collection overview",
+            quick: "Quick entry",
+            imports: "Import inbox",
+            decks: "Deck gaps",
+            history: "History",
+            shopping: "Shopping",
+          };
+          const c = box(
+            titles[tab],
+            loading ? "Connecting to your collection…" : "Your collection could not be loaded.",
+          );
+          if (loadError) c.append(el("p", loadError, "warn"));
+          if (!loading) {
+            const a = link("Sign in to OpenRift →", "/login?redirect=%2Frifter");
+            c.append(a, document.createTextNode(" "), button("Retry connection", load, true));
+          }
+          content.append(c);
+          return;
+        }
+        ({ home, quick, imports, decks, history, shopping })[tab](content);
+      }
+      function home(content) {
+        const stats = el("div", null, "grid");
+        for (const [label, value] of [
+          ["Owned copies", state.collections.reduce((n, c) => n + c.quantity, 0)],
+          ["Decks in progress", state.decks.length],
+          ["Awaiting review", state.imports.filter((i) => i.status === "pending").length],
+        ]) {
+          const c = box();
+          c.append(el("div", label, "eyebrow"), el("div", value, "stat"));
+          stats.append(c);
+        }
+        content.append(stats);
+        const next = box(
+          "Make the next addition count",
+          "Enter a collector code, review a new list, or see what you still need for a deck.",
+        );
+        next.append(
+          button("Add acquired cards", () => switchTab("quick"), true),
+          document.createTextNode(" "),
+          button("Review an import", () => switchTab("imports")),
+        );
+        content.append(next);
+        if (!state.collections.length) {
+          const c = box(
+            "Start your collection",
+            "Create a personal collection in OpenRift, then return here to enter acquisitions.",
+          );
+          c.append(link("Create a collection →", "/collections"));
+          content.append(c);
+        }
+        const c = box(
+          "Keep the source. Keep control.",
+          "Imported lists stay in quarantine until you confirm their destination, quantities and printing choices. History records confirmed changes, including edits made in OpenRift.",
+        );
+        content.append(c);
+      }
+      function collectionSelect(parent) {
+        return field(
+          parent,
+          "Destination collection",
+          select(state.collections.map((c) => [c.id, c.name])),
+        );
+      }
+      function candidateLabel(c) {
+        return [c.code, c.name, c.finish, c.language, c.artVariant].filter(Boolean).join(" · ");
+      }
+      function quick(content) {
+        const c = box(
+          "Add new acquisitions",
+          "Type a collector code such as RAD-120 or OGN-123, or search by card name. Choose the exact printing before adding it to your batch.",
+        );
+        const q = field(c, "Collector code or card name", input(quickQuery));
+        q.placeholder = "OGN-123";
+        const result = el("div");
+        const search = async () => {
+          quickQuery = q.value.trim();
+          quickResults = await api("/search?q=" + encodeURIComponent(quickQuery));
+          renderResults();
+        };
+        const form = el("form");
+        form.append(q);
+        form.onsubmit = (e) => {
+          e.preventDefault();
+          run(search);
+        };
+        c.append(form, button("Find card", search, true), result);
+        function renderResults() {
+          result.replaceChildren();
+          if (!quickResults.length) {
+            result.append(
+              el("p", "No catalog matches. Check the code or load the catalog first.", "muted"),
+            );
+            return;
+          }
+          for (const candidate of quickResults) {
+            const r = el("div", null, "entry");
+            r.append(
+              el("div", candidateLabel(candidate)),
+              button("Add to batch", () => {
+                const found = batch.find((b) => b.candidate.printingId === candidate.printingId);
+                if (found) found.quantity++;
+                else batch.push({ candidate, quantity: 1 });
+                render();
+              }),
+            );
+            result.append(r);
+          }
+        }
+        if (quickResults.length) renderResults();
+        content.append(c);
+        const b = box(
+          "Acquisition batch",
+          batch.length
+            ? "Nothing is owned until you review and confirm this batch."
+            : "Your batch is empty. Search for a card to begin.",
+        );
+        for (const item of batch) {
+          const r = el("div", null, "entry");
+          r.append(el("div", candidateLabel(item.candidate)));
+          const controls = el("div", null, "row");
+          const n = input(String(item.quantity), "number");
+          n.min = "1";
+          n.max = "1000";
+          n.setAttribute("aria-label", "Quantity for " + item.candidate.code);
+          n.onchange = () => {
+            item.quantity = Number(n.value);
+          };
+          controls.append(
+            button("−", () => {
+              if (item.quantity > 1) item.quantity--;
+              render();
+            }),
+            n,
+            button("+", () => {
+              item.quantity++;
+              render();
+            }),
+            button("Remove", () => {
+              batch = batch.filter((x) => x !== item);
+              render();
+            }),
+          );
+          r.append(controls);
+          b.append(r);
+        }
+        if (batch.length && state.collections.length) {
+          const destination = collectionSelect(b);
+          b.append(
+            button(
+              "Review batch",
+              async () => {
+                const item = await api("/imports", "POST", {
+                  rawInput: batch.map((b) => b.quantity + " " + b.candidate.code).join("\n"),
+                  format: "acquisition",
+                  source: "Quick entry",
+                  destination: { kind: "collection", id: destination.value, mode: "add" },
+                });
+                await api("/imports/" + item.id, "PATCH", {
+                  revision: item.revision,
+                  choices: batch.map((b, index) => ({
+                    index,
+                    printingId: b.candidate.printingId,
+                    excluded: false,
+                  })),
+                });
+                tab = "imports";
+                current = await api("/imports/" + item.id);
+                batch = [];
+                await load();
+              },
+              true,
+            ),
+          );
+        }
+        content.append(b);
+      }
+      function imports(content) {
+        if (current) {
+          review(content);
+          return;
+        }
+        const c = box(
+          "Quarantine a new list",
+          "Paste a deck or collection export. Choose where it belongs; no collection or deck changes happen at this step.",
+        );
+        const format = field(
+          c,
+          "Input format",
+          select([
+            ["text", "Pasted deck / card list"],
+            ["piltover-code", "Piltover deck code"],
+            ["piltover-csv", "Piltover collection CSV"],
+            ["rifty", "Rifty CSV"],
+            ["openrift", "OpenRift CSV"],
+          ]),
+        );
+        const source = field(c, "Source link or note", input());
+        const raw = field(c, "List or CSV contents", el("textarea"));
+        const upload = field(c, "Or select a text / CSV file", input("", "file"));
+        upload.accept = ".csv,.txt";
+        upload.onchange = () =>
+          run(async () => {
+            const f = upload.files[0];
+            if (f) {
+              if (f.size > 1000000) throw Error("File is too large");
+              raw.value = await f.text();
+            }
+          });
+        const target = field(
+          c,
+          "Destination",
+          select([
+            ["new", "New deck"],
+            ...state.collections.map((x) => ["collection:" + x.id, "Collection · " + x.name]),
+            ...state.decks.map((x) => ["deck:" + x.id, "Deck · " + x.name]),
+          ]),
+        );
+        const name = field(c, "New deck name", input("New aspiring deck"));
+        const status = field(
+          c,
+          "New deck status",
+          select([
+            ["aspiring", "Aspiring"],
+            ["active", "Active"],
+          ]),
+        );
+        const mode = field(
+          c,
+          "Existing destination behavior",
+          select([
+            ["add", "Add quantities"],
+            ["replace", "Replace contents — removes existing cards"],
+          ]),
+        );
+        const replacement = check(
+          c,
+          "I understand that replacing contents removes the current cards (recoverable through history).",
+        );
+        c.append(
+          button(
+            "Create review preview",
+            async () => {
+              let destination;
+              if (target.value === "new")
+                destination = { kind: "new-deck", name: name.value, status: status.value };
+              else {
+                const [kind, id] = target.value.split(":");
+                if (mode.value === "replace" && !replacement.checked)
+                  throw Error("Acknowledge replacement before continuing");
+                destination = { kind, id, mode: mode.value };
+              }
+              const item = await api("/imports", "POST", {
+                rawInput: raw.value,
+                source: source.value,
+                format: format.value,
+                destination,
+              });
+              current = await api("/imports/" + item.id);
+              await load();
+            },
+            true,
+          ),
+        );
+        content.append(c);
+        const inbox = box(
+          "Saved import inbox",
+          "Pending lists remain here across restarts. Applied lists retain their original input and exclusions.",
+        );
+        if (!state.imports.length) inbox.append(el("p", "No imports yet.", "empty"));
+        for (const item of state.imports) {
+          const r = el("div", null, "entry");
+          r.append(
+            el("span", item.status, "badge"),
+            el(
+              "p",
+              (item.source || item.format) + " · " + new Date(item.created_at).toLocaleString(),
+            ),
+            button("Open review", async () => {
+              current = await api("/imports/" + item.id);
+              render();
+            }),
+          );
+          inbox.append(r);
+        }
+        content.append(inbox);
+      }
+      function review(content) {
+        const item = current,
+          c = box(
+            "Review before applying",
+            item.format +
+              " → " +
+              (item.destination.kind === "new-deck"
+                ? item.destination.name
+                : item.destination.kind + " · " + item.destination.mode),
+          );
+        c.append(
+          button("← Back to inbox", () => {
+            current = null;
+            render();
+          }),
+        );
+        if (item.duplicates.length)
+          c.append(
+            el(
+              "p",
+              "Possible duplicate: this input appears in " +
+                item.duplicates.length +
+                " other import(s). Check before adding copies again.",
+              "warn",
+            ),
+          );
+        for (const warning of item.warnings) c.append(el("p", warning, "warn"));
+        if (item.status === "pending" && !item.rows.length) {
+          const corrected = field(c, "Correct the source input", el("textarea"));
+          corrected.value = item.raw_input;
+          c.append(
+            button(
+              "Create corrected preview",
+              async () => {
+                const next = await api("/imports", "POST", {
+                  rawInput: corrected.value,
+                  source: item.source,
+                  format: item.format,
+                  destination: item.destination,
+                });
+                current = await api("/imports/" + next.id);
+                await load();
+              },
+              true,
+            ),
+          );
+          content.append(c);
+          return;
+        }
+        const choices = [];
+        item.rows.forEach((row, index) => {
+          const r = el("div", null, "entry");
+          r.append(
+            el(
+              "h3",
+              row.quantity +
+                " × " +
+                (row.candidates.find((c) => c.printingId === row.printingId)?.name || row.input),
+            ),
+            el("small", row.input),
+          );
+          const printing = field(
+            r,
+            "Printing",
+            select(
+              [
+                ["", "Choose a printing"],
+                ...row.candidates.map((c) => [c.printingId, candidateLabel(c)]),
+              ],
+              row.printingId || "",
+            ),
+          );
+          const zone = field(
+            r,
+            "Deck section",
+            select(
+              [
+                "main",
+                "legend",
+                "champion",
+                "battlefield",
+                "runes",
+                "sideboard",
+                "legend-options",
+              ].map((x) => [x, x]),
+              row.zone,
+            ),
+          );
+          if (item.destination.kind === "collection") zone.parentElement && (zone.hidden = true);
+          const conditionOptions = [
+            ["", "Unrecorded"],
+            ...["mint", "near-mint", "excellent", "good", "light-played", "played", "poor"].map(
+              (x) => [x, x],
+            ),
+          ];
+          if (row.condition && !conditionOptions.some((x) => x[0] === row.condition))
+            conditionOptions.push([row.condition, "Unrecognized: " + row.condition]);
+          const condition = field(r, "Condition", select(conditionOptions, row.condition || ""));
+          if (row.metadata.grader) condition.disabled = true;
+          const excluded = check(r, "Exclude this row (retained in history)");
+          excluded.checked = row.excluded;
+          const q = input();
+          q.placeholder = "Search code or exact card name";
+          q.setAttribute("aria-label", "Resolve row " + (index + 1));
+          r.append(
+            q,
+            button("Find another printing", async () => {
+              const results = await api("/search?q=" + encodeURIComponent(q.value));
+              for (const candidate of results) {
+                if (!row.candidates.some((c) => c.printingId === candidate.printingId)) {
+                  row.candidates.push(candidate);
+                  const option = el("option", candidateLabel(candidate));
+                  option.value = candidate.printingId;
+                  printing.append(option);
+                }
+              }
+              if (!results.length) throw Error("No matching printings");
+            }),
+          );
+          if (row.warning) r.append(el("p", row.warning, "warn"));
+          if (item.status === "applied")
+            r.querySelectorAll("input,select,button").forEach((n) => (n.disabled = true));
+          choices.push({ index, printing, excluded, zone, condition });
+          c.append(r);
+        });
+        const details = el("details");
+        details.append(el("summary", "Original source input"), el("pre", item.raw_input));
+        c.append(details);
+        if (item.status === "pending") {
+          const duplicate = check(
+            c,
+            "I acknowledge any previously applied duplicate and intend to add this list again.",
+          );
+          const save = async () => {
+            await api("/imports/" + item.id, "PATCH", {
+              revision: current.revision,
+              choices: choices.map((x) => ({
+                index: x.index,
+                printingId: x.printing.value || null,
+                excluded: x.excluded.checked,
+                zone: x.zone.value,
+                condition: x.condition.value || null,
+              })),
+            });
+            current = await api("/imports/" + item.id);
+          };
+          c.append(
+            button("Save review", async () => {
+              await save();
+              render();
+            }),
+            document.createTextNode(" "),
+            button(
+              "Confirm and apply",
+              async () => {
+                await save();
+                await api("/imports/" + item.id + "/confirm", "POST", {
+                  revision: current.revision,
+                  acknowledgeDuplicate: duplicate.checked,
+                });
+                current = await api("/imports/" + item.id);
+                await load();
+                $("#message").append(
+                  el(
+                    "p",
+                    "Applied successfully. You can reverse this action from History.",
+                    "notice",
+                  ),
+                );
+              },
+              true,
+            ),
+          );
+        } else
+          c.append(
+            el("p", "Applied · This preview is read-only. Reverse changes from History.", "notice"),
+          );
+        content.append(c);
+      }
+      function decks(content) {
+        const c = box(
+          "Deck readiness",
+          "Each deck independently uses your collection. Cards are allocated once across sections within a deck; no cards are reserved between decks.",
+        );
+        if (!state.decks.length) {
+          c.append(
+            el("p", "Import a deck to compare it with your collection.", "empty"),
+            button("Import a deck", () => switchTab("imports"), true),
+          );
+          content.append(c);
+          return;
+        }
+        const deck = field(
+          c,
+          "Deck",
+          select(
+            state.decks.map((d) => [d.id, d.name + " · " + d.status]),
+            selectedDeck || state.decks[0].id,
+          ),
+        );
+        const status = field(
+          c,
+          "Status",
+          select(
+            [
+              ["aspiring", "Aspiring"],
+              ["active", "Active"],
+            ],
+            state.decks.find((d) => d.id === deck.value)?.status,
+          ),
+        );
+        const side = check(c, "Include sideboard");
+        side.checked = true;
+        const strict = check(c, "Require the selected printing for each row");
+        const result = el("div");
+        deck.onchange = () => {
+          selectedDeck = deck.value;
+          status.value = state.decks.find((d) => d.id === deck.value).status;
+          result.replaceChildren();
+        };
+        c.append(
+          button("Save status", async () => {
+            await api("/decks/" + deck.value + "/status", "PATCH", { status: status.value });
+            selectedDeck = deck.value;
+            await load();
+          }),
+          document.createTextNode(" "),
+          button(
+            "Calculate missing cards",
+            async () => {
+              selectedDeck = deck.value;
+              const rows = await api(
+                "/decks/" +
+                  deck.value +
+                  "/gaps?sideboard=" +
+                  side.checked +
+                  "&strict=" +
+                  strict.checked,
+              );
+              result.replaceChildren(
+                el(
+                  "p",
+                  rows.reduce((n, r) => n + r.missing, 0) +
+                    " copies missing · " +
+                    rows.reduce((n, r) => n + r.quantity, 0) +
+                    " requested",
+                  "notice",
+                ),
+              );
+              const table = el("table"),
+                head = el("tr");
+              for (const text of ["Card", "Section", "Need", "Owned / allocated", "Missing"])
+                head.append(el("th", text));
+              table.append(head);
+              for (const row of rows) {
+                const tr = el("tr");
+                for (const value of [row.name, row.zone, row.quantity, row.owned, row.missing])
+                  tr.append(el("td", value));
+                table.append(tr);
+              }
+              const scroll = el("div", null, "scroll");
+              scroll.append(table);
+              result.append(scroll);
+            },
+            true,
+          ),
+          result,
+        );
+        content.append(c);
+      }
+      function history(content) {
+        const c = box(
+          "Action history",
+          "Confirmed changes are recorded in the database, including native OpenRift collection and deck edits. Undo adds a reversal; it never erases history. Newer conflicting edits must be resolved first.",
+        );
+        if (!state.actions.length) c.append(el("p", "No recorded changes yet.", "empty"));
+        for (const action of state.actions) {
+          const r = el("div", null, "entry");
+          r.append(
+            el("h3", action.label),
+            el(
+              "p",
+              new Date(action.created_at).toLocaleString() +
+                " · " +
+                action.changes +
+                " row changes",
+              "muted",
+            ),
+          );
+          if (action.reversed_by) r.append(el("span", "Reversed", "badge"));
+          else
+            r.append(
+              button(action.reverses ? "Reverse this undo" : "Undo action", async () => {
+                await api("/actions/" + action.id + "/undo", "POST", {});
+                await load();
+                $("#message").append(el("p", "Reversal recorded.", "notice"));
+              }),
+            );
+          c.append(r);
+        }
+        content.append(c);
+      }
+      function storeDirectory(content) {
+        const c = box(
+          "Pickup first. Know what is actually available.",
+          "Game Keeper Verdun is the first inventory adapter. Face to Face and 401 Games require separate verification of their branch inventory and pickup options.",
+        );
+        c.append(
+          el(
+            "p",
+            "Missing listings, failed refreshes and unknown stock must never be presented as sold out.",
+            "notice",
+          ),
+        );
+        for (const [name, url, note] of [
+          [
+            "Game Keeper Verdun",
+            "https://www.gamekeeperverdun.com/products/multi_search",
+            "Existing read-only adapter; live refresh requires authorized access.",
+          ],
+          [
+            "Face to Face",
+            "https://www.facetofacegames.com/",
+            "Montréal / Verdun option. Official homepage warns of an alternate Verdun location; confirm the current address and pickup stock.",
+          ],
+          [
+            "401 Games",
+            "https://store.401games.ca/",
+            "Official locations page lists Toronto and Vaughan. Treat as a Canadian shipping fallback, not nearby Montréal pickup.",
+          ],
+        ]) {
+          const r = el("div", null, "entry");
+          const a = el("a", name + " ↗");
+          a.href = url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          r.append(a, el("p", note, "muted"));
+          c.append(r);
+        }
+        c.append(
+          el(
+            "p",
+            "Compare alternative legends by importing additional aspiring decks. Evelynn stays intact. Live buying-cost comparison becomes available when a validated inventory snapshot is loaded.",
+            "muted",
+          ),
+        );
+        content.append(c);
+      }
+      function shopping(content) {
+        const c = box(
+          "Compare the decks you could build",
+          "Compare each deck independently against your collection and the same dated Game Keeper inventory. Prices are CAD, before tax and shipping. These are reviewable candidates, not reservations or verified pickup stock.",
+        );
+        const status = el("div");
+        c.append(status);
+        const reload = async () => {
+          const value = await api("/shopping/status");
+          status.replaceChildren();
+          status.append(
+            el(
+              "p",
+              value.snapshot
+                ? value.snapshot.records +
+                    " inventory rows · " +
+                    value.snapshot.coverage +
+                    " · loaded " +
+                    new Date(value.snapshot.created_at).toLocaleString()
+                : "No validated inventory snapshot loaded.",
+              "notice",
+            ),
+          );
+          if (value.refresh)
+            status.append(
+              el(
+                "p",
+                "Last refresh: " +
+                  value.refresh.status +
+                  (value.refresh.error ? " · " + value.refresh.error : ""),
+                "muted",
+              ),
+            );
+          if (value.progress)
+            status.append(
+              el("p", "Pages: " + value.progress.pages + " · variants: " + value.progress.variants),
+            );
+        };
+        const permission = check(
+          c,
+          "I have permission from Game Keeper for this inventory retrieval.",
+        );
+        c.append(
+          button("Refresh store inventory", async () => {
+            if (!permission.checked) throw Error("Store permission is required");
+            await api("/shopping/refresh", "POST", { storePermission: true });
+            await reload();
+          }),
+          document.createTextNode(" "),
+          button("Check refresh progress", reload),
+          document.createTextNode(" "),
+          button("Cancel refresh", async () => {
+            await api("/shopping/cancel", "POST", {});
+            await reload();
+          }),
+        );
+        const file = field(c, "Or load an existing verified inventory CSV", input("", "file"));
+        file.accept = ".csv";
+        c.append(
+          button("Validate and load snapshot", async () => {
+            const f = file.files[0];
+            if (!f || f.size > 5000000) throw Error("Choose an inventory CSV under 5 MB");
+            await api("/shopping/snapshot", "POST", { csv: await f.text() });
+            await reload();
+          }),
+        );
+        const selected = state.decks.map((deck) => ({
+          deck,
+          input: check(c, deck.name + " · " + deck.status),
+        }));
+        const side = check(c, "Include sideboards");
+        side.checked = true;
+        const output = el("div");
+        c.append(
+          button(
+            "Compare selected decks",
+            async () => {
+              const deckIds = selected.filter((s) => s.input.checked).map((s) => s.deck.id);
+              if (!deckIds.length) throw Error("Select at least one deck");
+              const result = await api("/shopping/compare", "POST", {
+                deckIds,
+                sideboard: side.checked,
+              });
+              output.replaceChildren();
+              for (const comparison of result) {
+                const d = state.decks.find((d) => d.id === comparison.deckId);
+                const card = box(
+                  d.name,
+                  comparison.planned +
+                    " copies found · " +
+                    comparison.unfilled +
+                    " unfilled · CAD " +
+                    comparison.subtotalCad +
+                    " available-copy subtotal",
+                );
+                if (comparison.stale)
+                  card.append(
+                    el(
+                      "p",
+                      "Stale or unknown observation time — refresh before relying on these prices.",
+                      "warn",
+                    ),
+                  );
+                card.append(el("p", comparison.limitations, "muted"));
+                const table = el("table"),
+                  header = el("tr");
+                for (const label of [
+                  "Card",
+                  "Need",
+                  "Planned",
+                  "Unfilled",
+                  "Subtotal CAD",
+                  "Status / review",
+                ])
+                  header.append(el("th", label));
+                table.append(header);
+                for (const row of comparison.rows) {
+                  const tr = el("tr");
+                  for (const value of [
+                    row.name,
+                    row.requested,
+                    row.planned,
+                    row.shortfall,
+                    row.subtotal_cad,
+                    row.status + " · " + row.review,
+                  ])
+                    tr.append(el("td", value));
+                  table.append(tr);
+                }
+                const wrap = el("div", null, "scroll");
+                wrap.append(table);
+                card.append(wrap);
+                for (const lot of comparison.allocations) {
+                  const r = el("p");
+                  const a = el(
+                    "a",
+                    lot.quantity +
+                      " × " +
+                      lot.name +
+                      " · " +
+                      lot.version +
+                      " · " +
+                      lot.finish +
+                      " · CAD " +
+                      lot.subtotal_cad,
+                  );
+                  a.href = lot.url;
+                  a.target = "_blank";
+                  a.rel = "noopener noreferrer";
+                  r.append(
+                    a,
+                    el(
+                      "small",
+                      " Observed " +
+                        (lot.checked_at || "unknown") +
+                        " · collector " +
+                        lot.collector_number,
+                    ),
+                  );
+                  card.append(r);
+                }
+                card.append(
+                  button("Export comparison CSV", () => {
+                    const fields = [
+                      "name",
+                      "section",
+                      "requested",
+                      "planned",
+                      "shortfall",
+                      "subtotal_cad",
+                      "status",
+                      "review",
+                      "product_links",
+                    ];
+                    const safe = (v) => {
+                      let s = String(v ?? "");
+                      if (/^[\s]*[=+@-]/.test(s)) s = "'" + s;
+                      return '"' + s.replaceAll('"', '""') + '"';
+                    };
+                    const csv = [
+                      fields.join(","),
+                      ...comparison.rows.map((r) => fields.map((k) => safe(r[k])).join(",")),
+                    ].join("\r\n");
+                    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+                    const a = el("a");
+                    a.href = url;
+                    a.download = "rifter-shopping.csv";
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }),
+                );
+                output.append(card);
+              }
+            },
+            true,
+          ),
+          output,
+        );
+        content.append(c);
+        storeDirectory(content);
+        run(reload);
+      }
+      run(load);
+      }
+    </script>
+  </body>
+</html>

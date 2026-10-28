@@ -1,0 +1,26 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm run gate
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: OpenRift typecheck with overlay
+        run: |
+          python3 scripts/apply-openrift.py
+          cd upstream/openrift
+          bun install --frozen-lockfile
+          bun run --cwd apps/web routes:generate
+          bun run typecheck --filter=api --filter=web

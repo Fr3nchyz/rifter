@@ -1,8 +1,21 @@
 # Rifter
 
+The integrated OpenRift collection workspace is implemented. See
+[Rifter app setup and usage](docs/RIFTER_APP.md) for home-network startup,
+reviewed imports, code-based acquisitions, undo, shopping, backup and validation.
+Run `python3 scripts/setup.py` then `python3 scripts/app.py start` from this directory.
+Use `python3 scripts/app.py status` to check readiness. Open the configured app
+address in your browser and sign in. **Do not open an HTML file directly:**
+the collection app needs its running OpenRift server and PostgreSQL database.
+
+For access from iPhone without a home computer running, see [Vercel delivery](docs/VERCEL.md).
+The frontend build is configured; provisioning and deploying the backend/database
+are still required.
+The recommended full deployment uses [Railway with the existing Supabase database](docs/RAILWAY.md).
+
 A local Riftbound collection and deck-shopping project: use OpenRift for collection/deck tracking and compare missing cards with Game Keeper Verdun inventory.
 
-**Current state:** the store importer, CSV/deck planner and local planning UI work. OpenRift is included as a pinned upstream submodule; its dependencies, database and account workflow have not been set up yet. The integration roadmap is in [PROJECT_PLAN.md](PROJECT_PLAN.md).
+**Current state:** OpenRift now has an integrated Rifter workspace backed by PostgreSQL. The original standalone Python planner remains available below. [PROJECT_PLAN.md](PROJECT_PLAN.md) records the earlier roadmap; the linked app guide documents the implemented behavior and remaining external-integration limits.
 
 ## Get the project
 
