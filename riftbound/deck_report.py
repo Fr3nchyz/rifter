@@ -17,7 +17,10 @@ def collector_stem(value):
 
 
 def build(targets,inventory,any_printing=False):
-    remaining={r['variant_id']:int(r['stock']) if r['stock']!='' else None for r in inventory}
+    # A manually validated listing may have no exposed store variant ID. Keep
+    # its internal allocation identity separate; never invent a purchasable ID.
+    key=lambda r: ('variant',r['variant_id']) if r.get('variant_id') else ('listing',r['url'],r['collector_number'],r['version'],r['finish'],r['condition'])
+    remaining={key(r):int(r['stock']) if r['stock']!='' else None for r in inventory}
     summaries=[];allocations=[]
     for request in targets:
         wanted=int(request['count']);name=request['name'];code=request['code']
@@ -26,13 +29,13 @@ def build(targets,inventory,any_printing=False):
         same_name=[r for r in inventory if card_name(r['name'])==card_name(name)]
         suggestions=[] if same_name else [r for r in inventory if card_name(r['name']).rstrip('s') == card_name(name).rstrip('s')]
         candidates=same_name if any_printing else [r for r in same_name if collector_stem(r['collector_number'])==collector_stem(number)]
-        eligible=[r for r in candidates if r['price_cad'] and remaining[r['variant_id']] is not None and remaining[r['variant_id']]>0]
+        eligible=[r for r in candidates if r['price_cad'] and remaining[key(r)] is not None and remaining[key(r)]>0]
         eligible.sort(key=lambda r:(Decimal(r['price_cad']),r['variant_id']))
         missing=wanted;subtotal=Decimal(0);purchases=[]
         for product in eligible:
-            count=min(missing,remaining[product['variant_id']])
+            count=min(missing,remaining[key(product)])
             if not count:continue
-            remaining[product['variant_id']]-=count;missing-=count
+            remaining[key(product)]-=count;missing-=count
             total=Decimal(product['price_cad'])*count;subtotal+=total
             lot=dict(section=section,code=code,name=name,quantity=count,price_cad=product['price_cad'],subtotal_cad=str(total),
                 collector_number=product['collector_number'],version=product['version'],finish=product['finish'],condition=product['condition'],

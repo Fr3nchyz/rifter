@@ -1,0 +1,8 @@
+{
+  "name": "rifter-workspace",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": { "test:browser": "playwright test", "test:database": "python3 scripts/test-rifter.py" },
+  "devDependencies": { "@playwright/test": "1.61.1" }
+}
