@@ -1,11 +1,11 @@
 #!/bin/bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 ensure_docker
-python3 scripts/app.py start
+python3 scripts/app.py start || { echo "Rifter did not start. See .local/run/supervisor.log or send this window's text to Claude."; pause_and_exit 1; }
 i=0
 until python3 scripts/app.py status >/dev/null 2>&1; do
   i=$((i + 1))
-  if [ "$i" -gt 150 ]; then
+  if [ "$i" -gt 450 ]; then
     echo "Still starting. Check .local/run/supervisor.log or send this window's text to Claude."
     pause_and_exit 1
   fi

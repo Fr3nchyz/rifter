@@ -1,6 +1,7 @@
 #!/bin/bash
 # Run once. Installs what Rifter needs and starts it. Needs internet and about 10-20 minutes.
 source "$(dirname "$0")/scripts/mac/common.sh"
+need_devtools
 need_tool git "macOS will offer to install the developer tools. Accept, wait for it to finish, then run this again."
 need_tool python3 "macOS will offer to install the developer tools. Accept, wait for it to finish, then run this again."
 ensure_docker

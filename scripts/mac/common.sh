@@ -8,6 +8,16 @@ pause_and_exit() {
   exit "${1:-1}"
 }
 
+need_devtools() {
+  # On stock macOS, git and python3 are stubs until the developer tools are installed.
+  if ! xcode-select -p >/dev/null 2>&1; then
+    echo "macOS needs its developer tools first. A window will offer to install them."
+    echo "Click Install, wait until it finishes, then double-click this launcher again."
+    xcode-select --install >/dev/null 2>&1
+    pause_and_exit 1
+  fi
+}
+
 need_tool() {
   # $1 = command, $2 = help text
   if ! command -v "$1" >/dev/null 2>&1; then
