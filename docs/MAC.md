@@ -39,6 +39,13 @@ and send it to Claude.
 | **Stop Rifter.command** | Stops Rifter. Your data is kept. |
 | **Backup Rifter.command** | Saves a backup file and opens its folder. Copy it to iCloud Drive or an external drive now and then. |
 
+## Updating
+
+When a new version is available: in GitHub Desktop click **Fetch origin** then
+**Pull origin**, then double-click **Start Rifter.command**. It notices the new
+version, installs it (a few minutes, the first time after each update), and opens
+the app. Your data is kept.
+
 ## Using it from your PC or phone later
 
 Not set up yet. By default the app only answers on the Mac itself
