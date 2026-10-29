@@ -678,8 +678,12 @@ const copiesOf = async (id: string) =>
 const replaceDest = (id: string) => ({ kind: "collection" as const, id, mode: "replace" as const });
 const stagedReplace = (id: string, raw: string, d: any = replaceDest(id)) =>
   service.preview(user, { rawInput: raw, source: "Replace fixture", format: "text", destination: d });
-const apply = (p: any, extra: Record<string, unknown> = {}) =>
-  service.confirm(user, p.id, { revision: p.revision, acknowledgeDuplicate: false, ...extra } as any);
+// Like the UI, send the change counts the preview shows (replace requires them).
+const apply = async (p: any, extra: Record<string, unknown> = {}) => {
+  const diff = (await service.import(user, p.id)).replaceDiff;
+  const expected = diff && !diff.refusal ? { expectedChange: { added: diff.copies.added, removed: diff.copies.removed } } : {};
+  return await service.confirm(user, p.id, { revision: p.revision, acknowledgeDuplicate: false, ...expected, ...extra } as any);
+};
 let replaceFixture: { id: string; keepNotes: string; plainOld: string; newest: string };
 test("replace diff: adds, removes and changes per printing, keeping other finishes and copies with notes", async () => {
   const id = await binder();
@@ -890,7 +894,7 @@ test("an unmatched row says why in plain words and keeps saying it after a save"
 test("token rows start excluded and visible; runes do not; the user can take a token back", async () => {
   const id = await binder("Tokens");
   const p = await service.preview(user, {
-    rawInput: "code,name,count\nTST-T05,Some Token,3\nTST-R03,Quick rune user,2\nTST-010," + defaultName + " // Back,1\nTST-010," + defaultName + ",1",
+    rawInput: "code,name,count\nTST-T05,Some Token,3\nTST-R03,Quick rune user,2\nNOPE-777,Foo // Bar,1\nTST-010," + defaultName + ",1",
     source: "Fixture",
     format: "rifty",
     destination: { kind: "collection", id, mode: "add" },
@@ -900,7 +904,7 @@ test("token rows start excluded and visible; runes do not; the user can take a t
   expect(rows[0]).toMatchObject({ excluded: true, autoExcluded: "token", warning: "Ignored: token" });
   expect(rows[1].autoExcluded).toBeUndefined(); // rune: ordinary tracked card
   expect(rows[1].excluded).toBe(false);
-  expect(rows[2]).toMatchObject({ excluded: true, autoExcluded: "token" }); // double-sided name
+  expect(rows[2]).toMatchObject({ excluded: true, autoExcluded: "token" }); // double-sided name, nothing in the catalog
   expect(rows[3].excluded).toBe(false);
   // Saving keeps the token ignored and its reason; unticking exclude is the explicit override.
   const kept = await service.review(user, p!.id, {
@@ -952,4 +956,65 @@ test("replace never deletes owned copies because a token row was auto-excluded",
   // A file that is only tokens leaves nothing to compare: replace is refused.
   const tokensOnly = await stagedReplace(id, "1 TST-T77");
   await expect(apply(tokensOnly!, { acknowledgeRemoval: true })).rejects.toThrow("Replace refused");
+});
+
+test("replace needs the preview's change counts from every caller", async () => {
+  const id = await binder("Expected required");
+  await seed(id, enNormal, 1);
+  const p = await stagedReplace(id, "1 TST-010");
+  await expect(
+    service.confirm(user, p!.id, { revision: p!.revision, acknowledgeDuplicate: false }),
+  ).rejects.toThrow("change counts");
+});
+test("excluded rows with no catalog candidates protect nothing and need an explicit acknowledgement", async () => {
+  const id = await binder("Unmatched ack");
+  const [runeCopy] = await seed(id, qe["TST-R03/normal"]!, 2);
+  await seed(id, enNormal, 1);
+  const p = await stagedReplace(id, "1 TST-010\n2 NOPE-777");
+  const excluded = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [{ index: 1, printingId: null, excluded: true }],
+  });
+  const diff = (await service.import(user, p!.id)).replaceDiff!;
+  expect(diff.unmatchedRows.map((u) => u.index)).toEqual([1]);
+  expect(diff.needsUnmatchedAcknowledgement).toBe(true);
+  expect(diff.lines.find((l) => l.printingId === qe["TST-R03/normal"])).toMatchObject({ kind: "removed" });
+  await expect(apply(excluded!)).rejects.toThrow("Explicit acknowledgement");
+  expect((await copiesOf(id)).length).toBe(3);
+  await apply(excluded!, { acknowledgeUnmatched: true, acknowledgeRemoval: true });
+  expect((await copiesOf(id)).some((c) => c.id === runeCopy)).toBe(false); // as the panel warned
+});
+test("auto-excluded token rows never need the unmatched acknowledgement; matched excluded rows protect", async () => {
+  const id = await binder("Token unmatched");
+  await seed(id, enNormal, 1);
+  const [runeCopy] = await seed(id, qe["TST-R03/normal"]!, 1);
+  const p = await stagedReplace(id, "1 TST-010\n1 NOPE-T99\n1 TST-R03");
+  expect(p!.rows[1].autoExcluded).toBe("token");
+  const kept = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [{ index: 2, printingId: null, excluded: true }], // matched candidates, excluded
+  });
+  const diff = (await service.import(user, p!.id)).replaceDiff!;
+  expect(diff.unmatchedRows).toEqual([]);
+  expect(diff.needsUnmatchedAcknowledgement).toBe(false);
+  await apply(kept!);
+  expect((await copiesOf(id)).some((c) => c.id === runeCopy)).toBe(true);
+});
+test("catalog type wins over name heuristics; extra leading zeros are dropped", async () => {
+  const [c] = await sql`INSERT INTO cards(name,slug,type) VALUES(${"Slash " + user + " // Name"},${user + "-slash"},'unit') RETURNING id`;
+  extraCards.push(c!.id);
+  const [f] = await sql`INSERT INTO faces(card_id,set_id,short_code,public_code,art_variant,artist,rarity,finish,language)
+    VALUES(${c!.id},${setId},'TST-880','TST-880','normal','Fixture','common','normal','EN') RETURNING id`;
+  await sql`INSERT INTO printings(face1_id) VALUES(${f!.id})`;
+  const id = await binder("Slash name");
+  const p = await service.preview(user, {
+    rawInput: "code,name,count\nTST-880,Slash " + user + " // Name,1",
+    source: "Fixture",
+    format: "rifty",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  expect(p!.rows[0].excluded).toBe(false);
+  expect(p!.rows[0].autoExcluded).toBeUndefined();
+  expect(parseCardNumber("RAD", "0012")!.exact).toBe("RAD-012");
+  expect(parseCardNumber("RAD", "0000")!.exact).toBe("RAD-000");
 });

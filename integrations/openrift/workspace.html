@@ -995,10 +995,22 @@
             el(
               "p",
               plural(diff.skippedRows, "row") +
-                " unresolved or excluded: no copy of the cards they could be is removed or added.",
+                " unresolved or excluded. Where the catalog knows a candidate card, no copy of it is removed or added.",
               "warn",
             ),
           );
+        if (diff.unmatchedRows.length) {
+          b.append(
+            el(
+              "h3",
+              "Unmatched rows — the cards they stand for are NOT protected (" + diff.unmatchedRows.length + ")",
+              "warn",
+            ),
+          );
+          const list = el("ul");
+          for (const u of diff.unmatchedRows) list.append(el("li", "Row " + (u.index + 1) + ": " + u.input + " — " + u.reason));
+          b.append(list);
+        }
         const label = (l) => [l.code, l.name, l.finish, l.language].filter(Boolean).join(" · ");
         const removals = diff.lines.filter((l) => l.kind === "removed" || (l.kind === "changed" && l.to < l.from));
         if (removals.length) {
@@ -1195,6 +1207,10 @@
                     "%) and that History can undo it.",
                 )
               : null;
+          const unmatched =
+            isReplace && item.replaceDiff?.needsUnmatchedAcknowledgement
+              ? check(c, "I understand cards these rows stand for will be removed if I own them.")
+              : null;
           const save = async () => {
             await api("/imports/" + item.id, "PATCH", {
               revision: current.revision,
@@ -1316,6 +1332,8 @@
                 const diff = current.replaceDiff;
                 if (isReplace) {
                   if (!diff || diff.refusal) throw Error(diff?.refusal || "Nothing to replace with");
+                  if (diff.needsUnmatchedAcknowledgement && !(unmatched && unmatched.checked))
+                    throw Error("Press Save review, then acknowledge the unmatched rows");
                   if (diff.needsRemovalAcknowledgement && !(removal && removal.checked))
                     throw Error("Press Save review, then acknowledge the large removal");
                 }
@@ -1325,6 +1343,7 @@
                   ...(isReplace
                     ? {
                         acknowledgeRemoval: Boolean(removal && removal.checked),
+                        acknowledgeUnmatched: Boolean(unmatched && unmatched.checked),
                         expectedChange: { added: diff.copies.added, removed: diff.copies.removed },
                       }
                     : {}),

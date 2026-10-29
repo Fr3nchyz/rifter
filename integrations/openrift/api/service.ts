@@ -23,12 +23,22 @@ async function isTokenRow(
   row: { code?: string; name?: string },
   found: RifterCandidate[],
 ): Promise<boolean> {
-  if (row.code && TOKEN_CODE.test(row.code.trim())) return true;
-  if (row.name?.includes(" // ")) return true;
-  if (found.length && found.every((c) => TOKEN_CODE.test(c.code))) return true;
-  if (!found.length) return false;
-  const ids = [...new Set(found.map((c) => c.cardId))];
-  return (await sql`SELECT 1 FROM cards WHERE id IN ${sql(ids)} AND type::text='token' LIMIT 1`).length > 0;
+  // The catalog wins: input heuristics (code shape, " // " in the name) apply only when
+  // the catalog found nothing or found a token; a catalog card that is not a token never
+  // gets auto-excluded because of how the file spelled it.
+  let catalogToken = false;
+  if (found.length) {
+    const ids = [...new Set(found.map((c) => c.cardId))];
+    catalogToken =
+      found.some((c) => TOKEN_CODE.test(c.code)) ||
+      (await sql`SELECT 1 FROM cards WHERE id IN ${sql(ids)} AND type::text='token' LIMIT 1`).length > 0;
+    if (!catalogToken) return false;
+  }
+  return (
+    catalogToken ||
+    Boolean(row.code && TOKEN_CODE.test(row.code.trim())) ||
+    Boolean(row.name?.includes(" // "))
+  );
 }
 const squash = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const MAX_PENDING_IMPORTS = 50;
@@ -67,7 +77,8 @@ export function parseCardNumber(
   if (!m || !/^[A-Za-z]{2,8}$/u.test(setCode)) return null;
   const [, letter = "", digits = "", modifier = "", promo = ""] = m;
   const set = setCode.toUpperCase();
-  const base = `${set}-${letter.toUpperCase()}${digits.padStart(letter ? 2 : 3, "0")}`;
+  const number = digits.replace(/^0+(?=\d)/u, "").padStart(letter ? 2 : 3, "0");
+  const base = `${set}-${letter.toUpperCase()}${number}`;
   const exact = base + modifier.toUpperCase() + (promo ? "-" + promo.toUpperCase() : "");
   return { base, exact, suffixed: Boolean(modifier || promo), set };
 }
@@ -244,8 +255,10 @@ export function createRifterService(databaseUrl: string) {
    * Target state of a collection after a "replace" import, as a difference from its
    * current copies. The file's quantities apply per resolved printing. Copies of the
    * same card in a printing the file does not name stay; copies of cards the file
-   * never mentions are removed. Unresolved or excluded rows protect every card they
-   * could stand for. Existing copies keep their notes and grading: only surplus copies
+   * never mentions are removed. Unresolved or excluded rows that have catalog candidates
+   * protect every card they could stand for. Rows with no candidates (code or name not in
+   * the catalog) protect nothing, so they are listed in the diff and need an explicit
+   * acknowledgement; auto-excluded tokens are exempt. Existing copies keep their notes and grading: only surplus copies
    * go (plain ones first, newest first) and only shortfalls are added.
    */
   async function planReplace(sql: DB, collectionId: string, all: StoredRow[], lock = false) {
@@ -266,9 +279,15 @@ export function createRifterService(databaseUrl: string) {
       if (entry) entry.quantity += row.quantity;
       else target.set(info.printingId, { quantity: row.quantity, row, info });
     }
-    // A row with no catalog candidates cannot stand for any card the user owns.
-    for (const row of all)
-      if (!included.includes(row)) for (const c of row.candidates) mentioned.add(c.cardId);
+    // A row with no catalog candidates protects nothing: the card it stands for may be
+    // owned under a catalog entry we cannot identify, so those rows are surfaced.
+    const unmatchedRows: RifterReplaceDiff["unmatchedRows"] = [];
+    all.forEach((row, index) => {
+      if (included.includes(row)) return;
+      for (const c of row.candidates) mentioned.add(c.cardId);
+      if (!row.candidates.length && !row.autoExcluded)
+        unmatchedRows.push({ index, input: row.input, reason: row.reason ?? row.warning ?? "Unmatched" });
+    });
     const query = lock
       ? sql`SELECT cp.id,cp.printing_id AS "printingId",cp.created_at,f.card_id AS "cardId",c.name,f.short_code AS code,f.finish,f.language,
           (cp.notes_public IS NOT NULL OR cp.notes_private IS NOT NULL OR cp.grader IS NOT NULL OR cp.is_altered OR jsonb_array_length(cp.links)>0) AS rich
@@ -295,6 +314,8 @@ export function createRifterService(databaseUrl: string) {
       copies: { added: 0, removed: 0, total: current.length, untouched: 0 },
       lines: [],
       skippedRows,
+      unmatchedRows,
+      needsUnmatchedAcknowledgement: unmatchedRows.length > 0,
       removalShare: 0,
       needsRemovalAcknowledgement: false,
       refusal: null,
@@ -520,6 +541,7 @@ export function createRifterService(databaseUrl: string) {
       revision: number;
       acknowledgeDuplicate: boolean;
       acknowledgeRemoval?: boolean;
+      acknowledgeUnmatched?: boolean;
       expectedChange?: { added: number; removed: number };
     },
   ) {
@@ -569,11 +591,13 @@ export function createRifterService(databaseUrl: string) {
         const { diff } = plan;
         if (diff.refusal) fail(diff.refusal);
         change = { added: diff.copies.added, removed: diff.copies.removed };
-        if (
-          input.expectedChange &&
-          (input.expectedChange.added !== change.added || input.expectedChange.removed !== change.removed)
-        )
+        if (!input.expectedChange) fail("Replace needs the change counts shown in the preview; reload and review");
+        if (input.expectedChange.added !== change.added || input.expectedChange.removed !== change.removed)
           fail("The collection changed since the preview; review the replacement again");
+        if (diff.needsUnmatchedAcknowledgement && !input.acknowledgeUnmatched)
+          fail(
+            `${diff.unmatchedRows.length} unmatched row(s) are excluded or unresolved; the cards they stand for are not protected and will be removed if you own them. Explicit acknowledgement required.`,
+          );
         if (diff.needsRemovalAcknowledgement && !input.acknowledgeRemoval)
           fail(
             `This import would remove ${diff.copies.removed} of ${diff.copies.total} copies (${Math.round(diff.removalShare * 100)}%). Explicit removal acknowledgement required.`,
@@ -689,8 +713,11 @@ export function createRifterService(databaseUrl: string) {
         try {
           await authorize(db, user, destination);
           replaceDiff = (await planReplace(db, destination.id, item.rows)).diff;
-        } catch {
-          replaceDiff = null; // collection deleted since the preview; confirm will refuse
+        } catch (error) {
+          // A deleted collection (404) is expected; confirm will refuse. Log anything else.
+          if (!(error instanceof RifterError && error.status === 404))
+            console.error("Rifter replace diff failed", (error as Error).name, (error as { code?: string }).code ?? "");
+          replaceDiff = null;
         }
       }
       return { ...item, duplicates: replacing ? [] : duplicates, replaceDiff };

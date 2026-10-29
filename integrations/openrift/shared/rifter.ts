@@ -44,7 +44,9 @@ export const rifterConfirmRequest = z.object({
   acknowledgeDuplicate: z.boolean().default(false),
   /** Replace mode: required when the import would remove more than half of the collection's copies. */
   acknowledgeRemoval: z.boolean().default(false),
-  /** Replace mode: the copy counts the reviewer saw; the server refuses if the collection changed since. */
+  /** Replace mode: required when excluded or unresolved rows have no catalog match, so the cards they stand for are not protected. */
+  acknowledgeUnmatched: z.boolean().default(false),
+  /** Collection replace: the copy counts the reviewer saw (required); the server refuses if the collection changed since. */
   expectedChange: z
     .object({ added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() })
     .optional(),
@@ -105,8 +107,11 @@ export interface RifterReplaceDiff {
   /** Physical copies. */
   copies: { added: number; removed: number; total: number; untouched: number };
   lines: RifterReplaceLine[];
-  /** Rows left out of the comparison (unresolved or excluded); their cards are never touched. */
+  /** Rows left out of the comparison (unresolved or excluded). Those with catalog candidates protect their cards. */
   skippedRows: number;
+  /** Skipped rows with no catalog candidates (tokens exempt): they protect nothing. */
+  unmatchedRows: { index: number; input: string; reason: string }[];
+  needsUnmatchedAcknowledgement: boolean;
   /** Share of the collection's copies that would be removed (0 to 1). */
   removalShare: number;
   needsRemovalAcknowledgement: boolean;
