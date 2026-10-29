@@ -100,3 +100,5 @@ python -m unittest discover -s tests -v
 - `.local/`: ignored user data, caches, generated reports and local browser artifacts.
 
 Backup collection/database files before updates. No credentials belong in tracked files. OpenRift's PostgreSQL setup, local signup/email verification, canonical catalog matching, durable ownership and integrated shopping view are the next implementation steps; they are not claimed complete.
+
+**Mac users:** see [docs/MAC.md](docs/MAC.md) for double-click launchers (no Terminal needed).
