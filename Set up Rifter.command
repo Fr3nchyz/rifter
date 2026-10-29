@@ -11,4 +11,5 @@ if ! python3 scripts/setup.py; then
   echo "Setup stopped with an error. Copy the last lines above and send them to Claude."
   pause_and_exit 1
 fi
+mkdir -p .local && git rev-parse HEAD > .local/last-setup-head 2>/dev/null
 bash "$ROOT/scripts/mac/start.sh"
