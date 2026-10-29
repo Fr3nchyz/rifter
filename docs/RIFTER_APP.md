@@ -54,6 +54,7 @@ docker compose --env-file .local/compose.env -f compose.rifter.yml stop
 ## Everyday use
 
 - **Collection → deck → wishlist:** the home shows your real collections, a native deck card/selector and your lists. **Add cards** opens OpenRift’s catalog in collection-add mode, including collector-code search. Open a deck, select its owned/missing chip, and use **Add to wishlist** to save the missing cards with OpenRift’s existing controls. **New collection** and **New wishlist** use the original dialogs.
+- **Quick entry:** pick a set once (it stays selected) and type only the number: `12` finds exactly `RAD-012`, with lettered or promo variants listed beneath and never `RAD-120`. `R3`/`T5` find rune/token codes. The default printing (English, normal finish, standard art) is offered first; other printings stay visible. Full codes and names still work.
 - **Code-batch review:** choose **Code batch** on the home to search `RAD-120`, `OGN-123` or a name. Choose a printing,
   increment its quantity and review the acquisition batch. Nothing is owned
   before confirmation. Card metadata/location can be edited in OpenRift.
@@ -62,6 +63,14 @@ docker compose --env-file .local/compose.env -f compose.rifter.yml stop
   replace behavior. Every import is saved as pending with its original input.
   Resolve printing choices and section warnings, or explicitly exclude rows,
   before applying. Repeated applied input requires duplicate acknowledgement.
+- **Review screen:** a live line counts rows ready, needing attention (unmatched / need a printing) and tokens ignored; a filter (on by default when something needs attention) shows problem rows first, each with a status chip and coloured edge. **Exclude all unmatched rows** is explicit and stays in history. Unmatched rows say why. A code that matches while the name differs is kept as a candidate with a warning and needs your choice. Token rows (`XXX-T##` codes, `A // B` names, catalog type token) start excluded as "Ignored: token"; runes are normal cards; untick Exclude to track a token.
+- **Replace a collection:** **Replace a collection from a file** makes a binder match the file (quantities per card
+  in the default printing, or the finish/language the file names). The review shows cards added, removed and changed
+  and lists every removal first. Existing copies are kept (notes and grading survive); only surplus copies are removed
+  (plain ones, newest first) and shortfalls added. Other finishes/languages of listed cards are left alone; cards the
+  file never mentions are removed; unresolved or excluded rows never cause removals. Replacing is refused when no row
+  resolves, and removing over half the copies needs an extra acknowledgement. Applying the same file again changes
+  nothing and needs no duplicate acknowledgement. History records it as one undoable action.
 - **Deck gaps:** mark a deck active or aspiring. Ownership is shared independently
   between decks, never reserved. Within one deck, copies are allocated once
   across zones. Sideboards are included by default. Strict-printing mode

@@ -3,6 +3,7 @@ import {
   rifterReviewRequest,
   rifterConfirmRequest,
   rifterDeckStateRequest,
+  rifterSearchQuery,
 } from "@openrift/shared/contracts/rifter";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -88,9 +89,14 @@ export function createRifterRoutes(databaseUrl: string) {
     return c.html(workspaceHtml);
   });
   app.get("/overview", async (c) => c.json(await service.overview(user(c))));
+  app.get("/search/sets", async (c) => c.json(await service.sets()));
   app.get("/search", async (c) => {
-    const q = z.string().trim().min(2).max(150).parse(c.req.query("q"));
-    return c.json(await service.search(q));
+    const query = rifterSearchQuery.parse({
+      q: c.req.query("q"),
+      set: c.req.query("set"),
+      number: c.req.query("number"),
+    });
+    return c.json(await service.search(query));
   });
   app.post("/imports", async (c) => {
     const input = rifterPreviewRequest.parse(await body(c));
