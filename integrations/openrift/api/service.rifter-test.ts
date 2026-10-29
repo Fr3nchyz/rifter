@@ -402,3 +402,14 @@ test("pending imports are capped per user", async () => {
   ).rejects.toThrow("Too many unconfirmed imports");
   await sql`DELETE FROM rifter_imports WHERE user_id=${other}`;
 });
+
+test("a CSV is read by its headers even when the wrong format was chosen", () => {
+  const rifty = "code,name,count\nOGN-002,Brazen Buccaneer,1\nRAD-053,Strigian Oracle,10";
+  for (const chosen of ["piltover-csv", "openrift", "rifty"] as const) {
+    const parsed = parseInput(chosen, rifty);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.rows[1]!.quantity).toBe(10);
+    expect(parsed.warnings.length).toBe(chosen === "rifty" ? 0 : 1);
+  }
+  expect(() => parseInput("rifty", "foo,bar\n1,2")).toThrow(/Missing or duplicate CSV headers/);
+});

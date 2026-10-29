@@ -121,6 +121,14 @@ function count(raw: string): number {
     throw new Error("Quantity must be a whole number between 1 and 1000");
   return Number(raw);
 }
+const csvFormats: Array<["rifty" | "openrift" | "piltover-csv", string[]]> = [
+  ["piltover-csv", ["Variant Number", "Card Name", "Quantity", "Foil"]],
+  ["openrift", ["Card ID", "Card Name", "Quantity"]],
+  ["rifty", ["code", "name", "count"]],
+];
+export function detectCsvFormat(headers: string[]) {
+  return csvFormats.find(([, required]) => required.every((h) => headers.includes(h)))?.[0];
+}
 export function parseInput(
   format: RifterPreviewRequest["format"],
   raw: string,
@@ -182,6 +190,12 @@ export function parseInput(
   } else {
     const table = csvRows(raw);
     const headers = table.shift()?.map((x) => x.trim()) ?? [];
+    // The header row is authoritative: a wrong "Input format" choice must not break a valid file.
+    const detected = detectCsvFormat(headers);
+    if (detected && detected !== format) {
+      warnings.push(`This file looks like ${detected} CSV; it was read that way instead of ${format}.`);
+      format = detected;
+    }
     const required =
       format === "rifty"
         ? ["code", "name", "count"]
@@ -218,7 +232,8 @@ export function parseInput(
       if (r.Altered && !/^(yes|true|1|no|false|0)$/iu.test(r.Altered))
         throw new Error("Unrecognized Altered value; use Yes or No");
       rows.push({
-        input: JSON.stringify(r),
+        // Readable label for the review screen; the original file is kept in raw_input.
+        input: [code, r["Card Name"] || r.name].filter(Boolean).join(" · ") || JSON.stringify(r),
         code,
         name: r["Card Name"] || r.name,
         quantity: count(r.Quantity ?? r.count ?? ""),
