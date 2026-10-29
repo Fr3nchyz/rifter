@@ -22,7 +22,10 @@ let collection: string,
   enNormal: string,
   enFoil: string,
   frNormal: string,
-  foilOnly: string;
+  foilOnly: string,
+  enFoilFr: string[],
+  frBoth: string[],
+  artNormal: string;
 const defaultName = "Rifter default " + crypto.randomUUID();
 const name = "Rifter fixture " + crypto.randomUUID();
 beforeAll(async () => {
@@ -80,6 +83,21 @@ beforeAll(async () => {
   foilOnly = (
     await make(defaultName + " foil", "TST-030", [{ finish: "foil", language: "EN", art: "normal" }])
   )[0]!;
+  enFoilFr = await make(defaultName + " b", "TST-050", [
+    { finish: "foil", language: "EN", art: "normal" },
+    { finish: "normal", language: "FR", art: "normal" },
+  ]);
+  frBoth = await make(defaultName + " c", "TST-051", [
+    { finish: "foil", language: "FR", art: "normal" },
+    { finish: "normal", language: "FR", art: "normal" },
+  ]);
+  await make(defaultName + " same", "TST-060", [{ finish: "normal", language: "EN", art: "normal" }]);
+  await make(defaultName + " same", "TST-061", [{ finish: "normal", language: "EN", art: "normal" }]);
+  artNormal = (await make(defaultName + " art", "TST-040", [
+    { finish: "normal", language: "EN", art: "normal", markers: ["promo"] },
+    { finish: "normal", language: "EN", art: "altart" },
+    { finish: "foil", language: "EN", art: "altart" },
+  ]))[0]!;
   await make(defaultName + " arts", "TST-021", [
     { finish: "normal", language: "EN", art: "altart" },
     { finish: "normal", language: "EN", art: "ultimate", markers: ["promo"] },
@@ -463,7 +481,7 @@ test("default rule picks English, normal finish and keeps every candidate visibl
   const row = p!.rows[0];
   expect(row.printingId).toBe(enNormal);
   expect(row.warning).toBeNull();
-  expect(row.autoChosen).toBe("English, normal finish");
+  expect(row.autoChosen).toBe("English, normal finish (2 other printings)");
   expect(row.candidates.map((c: any) => c.printingId).sort()).toEqual(
     [enNormal, enFoil, frNormal].sort(),
   );
@@ -472,7 +490,10 @@ test("default rule picks English, normal finish and keeps every candidate visibl
     name: "Auto deck",
     status: "aspiring",
   });
-  expect(deck!.rows[0].printingId).toBe(enNormal);
+  // Deck rows are never auto-picked: that would silently pin preferred_printing_id.
+  expect(deck!.rows[0].printingId).toBeNull();
+  expect(deck!.rows[0].warning).toBe("Choose a printing");
+  expect(deck!.rows[0].autoChosen).toBeUndefined();
 });
 test("an explicit finish or language in the file overrides the default rule", async () => {
   const foil = await previewDefault(
@@ -512,11 +533,42 @@ test("confirming an auto-chosen import applies the right copies; changing it dro
     revision: q!.revision,
     choices: [{ index: 0, printingId: enNormal, excluded: false }],
   });
-  expect(same!.rows[0].autoChosen).toBe("English, normal finish");
+  expect(same!.rows[0].autoChosen).toBe("English, normal finish (2 other printings)");
   const changed = await service.review(user, q!.id, {
     revision: same!.revision,
     choices: [{ index: 0, printingId: enFoil, excluded: false }],
   });
   expect(changed!.rows[0].autoChosen).toBeUndefined();
   expect(changed!.rows[0].printingId).toBe(enFoil);
+});
+
+test("default rule never picks across different cards and honours an explicit art variant", async () => {
+  const p = await previewDefault("1 " + defaultName + " same");
+  expect(p!.rows[0].candidates.length).toBe(2);
+  expect(new Set(p!.rows[0].candidates.map((c: any) => c.cardId)).size).toBe(2);
+  expect(p!.rows[0].printingId).toBeNull();
+  expect(p!.rows[0].warning).toBe("Choose a printing");
+  const art = await previewDefault(
+    "Card ID,Card Name,Quantity,Art Variant\nTST-040," + defaultName + " art,1,altart",
+    "openrift",
+  );
+  const row = art!.rows[0];
+  expect(row.candidates.length).toBe(2);
+  expect(row.candidates.every((c: any) => c.artVariant === "altart")).toBe(true);
+  expect(row.autoChosen).toBe("normal finish (1 other printing)");
+  expect(row.candidates.find((c: any) => c.printingId === row.printingId).artVariant).toBe("altart");
+  // Without the explicit constraint the standard-art step applies.
+  const free = await previewDefault("1 TST-040");
+  expect(free!.rows[0].printingId).toBe(artNormal);
+  expect(free!.rows[0].autoChosen).toBe("normal finish, standard art (2 other printings)");
+});
+test("a narrowing step that would leave nothing is skipped", async () => {
+  const first = await previewDefault("1 TST-050");
+  expect(first!.rows[0].candidates.length).toBe(2);
+  expect(first!.rows[0].printingId).toBe(enFoilFr[0]);
+  expect(first!.rows[0].autoChosen).toBe("English (1 other printing)");
+  const second = await previewDefault("1 TST-051");
+  expect(second!.rows[0].candidates.length).toBe(2);
+  expect(second!.rows[0].printingId).toBe(frBoth[1]);
+  expect(second!.rows[0].autoChosen).toBe("normal finish (1 other printing)");
 });

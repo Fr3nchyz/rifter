@@ -75,7 +75,12 @@ export function defaultPrinting(
     }
   }
   return left.length === 1 && applied.length
-    ? { candidate: left[0]!, note: applied.join(", ") }
+    ? {
+        candidate: left[0]!,
+        note:
+          applied.join(", ") +
+          ` (${found.length - 1} other printing${found.length === 2 ? "" : "s"})`,
+      }
     : null;
 }
 export function createRifterService(databaseUrl: string) {
@@ -157,9 +162,12 @@ export function createRifterService(databaseUrl: string) {
     const rows: StoredRow[] = [];
     for (const row of parsed.rows) {
       const found = await candidates(db, row);
-      const auto = defaultPrinting(found, row);
-      // Decks are gameplay identities unless a collector constraint was supplied.
-      // Keep all choices visible; never guess a collection printing from a name.
+      // The default printing rule applies to collection destinations only. A deck
+      // confirm would store the pick as preferred_printing_id, silently pinning the
+      // card to one printing for strict-mode ownership, so deck rows keep every
+      // choice visible and need an explicit selection.
+      const auto =
+        input.destination.kind === "collection" ? defaultPrinting(found, row) : null;
       rows.push({
         input: row.input,
         quantity: row.quantity,
