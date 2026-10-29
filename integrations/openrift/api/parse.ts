@@ -232,7 +232,8 @@ export function parseInput(
       if (r.Altered && !/^(yes|true|1|no|false|0)$/iu.test(r.Altered))
         throw new Error("Unrecognized Altered value; use Yes or No");
       rows.push({
-        input: JSON.stringify(r),
+        // Readable label for the review screen; the original file is kept in raw_input.
+        input: [code, r["Card Name"] || r.name].filter(Boolean).join(" · ") || JSON.stringify(r),
         code,
         name: r["Card Name"] || r.name,
         quantity: count(r.Quantity ?? r.count ?? ""),
