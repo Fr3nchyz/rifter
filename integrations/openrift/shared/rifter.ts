@@ -70,6 +70,8 @@ export interface RifterImportRow {
   };
   candidates: RifterCandidate[];
   printingId: string | null;
+  /** Set when the default rule (English, normal finish, standard art) picked the printing. */
+  autoChosen?: string;
   excluded: boolean;
   warning: string | null;
 }

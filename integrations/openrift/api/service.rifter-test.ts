@@ -17,7 +17,13 @@ let collection: string,
   backCard: string,
   printing: string,
   foil: string,
-  setId: string;
+  setId: string,
+  extraCards: string[] = [],
+  enNormal: string,
+  enFoil: string,
+  frNormal: string,
+  foilOnly: string;
+const defaultName = "Rifter default " + crypto.randomUUID();
 const name = "Rifter fixture " + crypto.randomUUID();
 beforeAll(async () => {
   await sql`INSERT INTO users(id,email,name,email_verified) VALUES(${user},${user + "@example.test"},'Rifter test',true),(${other},${other + "@example.test"},'Other',true)`;
@@ -46,11 +52,45 @@ beforeAll(async () => {
     await sql`INSERT INTO faces(card_id,set_id,short_code,public_code,art_variant,artist,rarity,finish) VALUES(${backCard},${setId},'TST-002','TST-002','normal','Fixture','common','normal') RETURNING id`;
   await sql`UPDATE printings SET face2_id=${face!.id} WHERE id=${printing}`;
 });
+beforeAll(async () => {
+  const make = async (
+    cardName: string,
+    code: string,
+    rows: { finish: string; language: string; art: string; markers?: string[] }[],
+  ) => {
+    const [c] =
+      await sql`INSERT INTO cards(name,slug,type) VALUES(${cardName},${user + "-" + code},'unit') RETURNING id`;
+    extraCards.push(c!.id);
+    const ids: string[] = [];
+    for (const r of rows) {
+      const [f] =
+        await sql`INSERT INTO faces(card_id,set_id,short_code,public_code,art_variant,artist,rarity,finish,language,marker_slugs)
+        VALUES(${c!.id},${setId},${code},${code},${r.art},'Fixture','common',${r.finish},${r.language},${r.markers ?? []}) RETURNING id`;
+      const [p] = await sql`INSERT INTO printings(face1_id) VALUES(${f!.id}) RETURNING id`;
+      ids.push(p!.id);
+    }
+    return ids;
+  };
+  const en = await make(defaultName, "TST-010", [
+    { finish: "normal", language: "EN", art: "normal" },
+    { finish: "foil", language: "EN", art: "normal" },
+    { finish: "normal", language: "FR", art: "normal" },
+  ]);
+  [enNormal, enFoil, frNormal] = [en[0]!, en[1]!, en[2]!];
+  foilOnly = (
+    await make(defaultName + " foil", "TST-030", [{ finish: "foil", language: "EN", art: "normal" }])
+  )[0]!;
+  await make(defaultName + " arts", "TST-021", [
+    { finish: "normal", language: "EN", art: "altart" },
+    { finish: "normal", language: "EN", art: "ultimate", markers: ["promo"] },
+  ]);
+});
 afterAll(async () => {
   await sql`DELETE FROM users WHERE id IN (${user},${other})`;
-  await sql`DELETE FROM printings WHERE id IN (${printing},${foil})`;
-  await sql`DELETE FROM faces WHERE card_id IN (${card},${backCard})`;
-  await sql`DELETE FROM cards WHERE id IN (${card},${backCard})`;
+  const owned = [card, backCard, ...extraCards];
+  await sql`DELETE FROM printings WHERE face1_id IN (SELECT id FROM faces WHERE card_id IN ${sql(owned)})`;
+  await sql`DELETE FROM faces WHERE card_id IN ${sql(owned)}`;
+  await sql`DELETE FROM cards WHERE id IN ${sql(owned)}`;
   await sql`DELETE FROM sets WHERE id=${setId}`;
   await sql.end();
 });
@@ -131,13 +171,15 @@ test("CSV language names and condition vocabularies round-trip without invalid s
 test("quarantine does not mutate ownership; ambiguous code blocks confirmation", async () => {
   const before = await count();
   const p = await service.preview(user, {
-    rawInput: "2 TST-001",
+    rawInput: "2 TST-021",
     source: "Test",
     format: "acquisition",
     destination: dest(),
   });
   expect(p!.rows[0].candidates.length).toBe(2);
   expect(p!.rows[0].printingId).toBeNull();
+  expect(p!.rows[0].warning).toBe("Choose a printing");
+  expect(p!.rows[0].autoChosen).toBeUndefined();
   await expect(
     service.confirm(user, p!.id, { revision: 1, acknowledgeDuplicate: false }),
   ).rejects.toThrow("Resolve");
@@ -412,4 +454,69 @@ test("a CSV is read by its headers even when the wrong format was chosen", () =>
     expect(parsed.warnings.length).toBe(chosen === "rifty" ? 0 : 1);
   }
   expect(() => parseInput("rifty", "foo,bar\n1,2")).toThrow(/Missing or duplicate CSV headers/);
+});
+
+const previewDefault = (rawInput: string, format: "text" | "openrift" = "text", d: any = dest()) =>
+  service.preview(user, { rawInput, source: "Fixture", format, destination: d });
+test("default rule picks English, normal finish and keeps every candidate visible", async () => {
+  const p = await previewDefault("2 TST-010");
+  const row = p!.rows[0];
+  expect(row.printingId).toBe(enNormal);
+  expect(row.warning).toBeNull();
+  expect(row.autoChosen).toBe("English, normal finish");
+  expect(row.candidates.map((c: any) => c.printingId).sort()).toEqual(
+    [enNormal, enFoil, frNormal].sort(),
+  );
+  const deck = await previewDefault("1 TST-010", "text", {
+    kind: "new-deck",
+    name: "Auto deck",
+    status: "aspiring",
+  });
+  expect(deck!.rows[0].printingId).toBe(enNormal);
+});
+test("an explicit finish or language in the file overrides the default rule", async () => {
+  const foil = await previewDefault(
+    "Card ID,Card Name,Quantity,Finish\nTST-010," + defaultName + ",1,foil",
+    "openrift",
+  );
+  expect(foil!.rows[0].printingId).toBe(enFoil);
+  const fr = await previewDefault(
+    "Card ID,Card Name,Quantity,Language\nTST-010," + defaultName + ",1,French",
+    "openrift",
+  );
+  expect(fr!.rows[0].printingId).toBe(frNormal);
+});
+test("a card with only a foil English printing still resolves", async () => {
+  const p = await previewDefault("1 TST-030");
+  expect(p!.rows[0].printingId).toBe(foilOnly);
+  expect(p!.rows[0].warning).toBeNull();
+});
+test("confirming an auto-chosen import applies the right copies; changing it drops the note", async () => {
+  const before = await count(),
+    p = await previewDefault("3 TST-010");
+  const applied = await service.confirm(user, p!.id, {
+    revision: p!.revision,
+    acknowledgeDuplicate: true,
+  });
+  expect(applied.status).toBe("applied");
+  expect(await count()).toBe(before + 3);
+  expect(
+    Number(
+      (
+        await sql`SELECT count(*) AS n FROM copies WHERE collection_id=${collection} AND printing_id=${enNormal}`
+      )[0]!.n,
+    ),
+  ).toBe(3);
+  const q = await previewDefault("1 TST-010");
+  const same = await service.review(user, q!.id, {
+    revision: q!.revision,
+    choices: [{ index: 0, printingId: enNormal, excluded: false }],
+  });
+  expect(same!.rows[0].autoChosen).toBe("English, normal finish");
+  const changed = await service.review(user, q!.id, {
+    revision: same!.revision,
+    choices: [{ index: 0, printingId: enFoil, excluded: false }],
+  });
+  expect(changed!.rows[0].autoChosen).toBeUndefined();
+  expect(changed!.rows[0].printingId).toBe(enFoil);
 });

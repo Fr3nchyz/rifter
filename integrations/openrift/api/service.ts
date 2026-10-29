@@ -15,6 +15,11 @@ import { parseInput } from "./parse.js";
 type StoredRow = RifterImportRow & { parseWarning?: string | null };
 const MAX_PENDING_IMPORTS = 50;
 const DISCARD_AFTER_DAYS = 30;
+// Default printing rule for ambiguous rows. Values are the catalog slugs from
+// OpenRift migration 001 (languages.code, finishes.slug, art_variants.slug).
+const DEFAULT_LANGUAGE = "EN"; // languages: EN, FR, SC
+const DEFAULT_FINISH = "normal"; // finishes: normal, foil, metal, metal-deluxe
+const DEFAULT_ART_VARIANT = "normal"; // art_variants: normal, altart, ultimate
 type DB = postgres.Sql | postgres.TransactionSql;
 interface ImportRecord {
   id: string;
@@ -42,6 +47,36 @@ function fail(message: string): never {
 }
 function jsonValue(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}
+/**
+ * Visible, deterministic default for a row with several candidates: narrow to
+ * English, then the normal finish, then the standard art. A step is skipped when
+ * the file stated that attribute or when it would leave nothing. Returns the
+ * single remaining printing only when exactly one printing of one card is left.
+ */
+export function defaultPrinting(
+  found: RifterCandidate[],
+  explicit: { finish?: string; language?: string; artVariant?: string },
+): { candidate: RifterCandidate; note: string } | null {
+  if (found.length < 2 || new Set(found.map((c) => c.cardId)).size !== 1) return null;
+  let left = found;
+  const applied: string[] = [];
+  const steps: [boolean, (c: RifterCandidate) => boolean, string][] = [
+    [!explicit.language, (c) => c.language === DEFAULT_LANGUAGE, "English"],
+    [!explicit.finish, (c) => c.finish === DEFAULT_FINISH, "normal finish"],
+    [!explicit.artVariant, (c) => c.artVariant === DEFAULT_ART_VARIANT, "standard art"],
+  ];
+  for (const [enabled, keep, label] of steps) {
+    if (!enabled) continue;
+    const narrowed = left.filter(keep);
+    if (narrowed.length && narrowed.length < left.length) {
+      left = narrowed;
+      applied.push(label);
+    }
+  }
+  return left.length === 1 && applied.length
+    ? { candidate: left[0]!, note: applied.join(", ") }
+    : null;
 }
 export function createRifterService(databaseUrl: string) {
   const db = postgres(databaseUrl, { max: 5, prepare: false });
@@ -122,6 +157,7 @@ export function createRifterService(databaseUrl: string) {
     const rows: StoredRow[] = [];
     for (const row of parsed.rows) {
       const found = await candidates(db, row);
+      const auto = defaultPrinting(found, row);
       // Decks are gameplay identities unless a collector constraint was supplied.
       // Keep all choices visible; never guess a collection printing from a name.
       rows.push({
@@ -131,13 +167,14 @@ export function createRifterService(databaseUrl: string) {
         condition: row.condition,
         metadata: row.metadata,
         candidates: found,
-        printingId: found.length === 1 ? found[0]!.printingId : null,
+        printingId: found.length === 1 ? found[0]!.printingId : (auto?.candidate.printingId ?? null),
+        ...(auto ? { autoChosen: auto.note } : {}),
         excluded: false,
         parseWarning: row.warning ?? null,
         warning:
           row.warning ??
           (found.length
-            ? found.length > 1
+            ? found.length > 1 && !auto
               ? "Choose a printing"
               : null
             : "No exact catalog match; search and resolve or exclude this row"),
@@ -196,6 +233,8 @@ export function createRifterService(databaseUrl: string) {
         const row = rows[choice.index];
         if (!row) fail("Unknown review row");
         row.excluded = choice.excluded;
+        // Any change of printing is the user's own choice, not the default rule.
+        if (choice.printingId !== row.printingId) delete row.autoChosen;
         if (choice.printingId) {
           // Explicit resolution may select a different search result, but it must
           // be a real standard printing; no arbitrary client-supplied card IDs.

@@ -412,6 +412,7 @@
         parent.append(l);
         return i;
       }
+      const SEARCH_HINT = "Type at least 2 letters or part of a card code";
       async function api(path, method = "GET", data) {
         const response = await fetch(API + path, {
           method,
@@ -423,7 +424,11 @@
             "The collection API is not available at this address. Open this tool from the running OpenRift app.",
           );
         const result = await response.json();
-        if (!response.ok) throw Error(result.error || "Request failed");
+        if (!response.ok) {
+          if (path.startsWith("/search") && /expected string to have >=2/u.test(JSON.stringify(result)))
+            throw Error(SEARCH_HINT);
+          throw Error(result.error || "Request failed");
+        }
         if (window.parent !== window && method !== "GET" && /\/(confirm|undo|status)$/u.test(path))
           window.parent.postMessage({ type: "rifter:changed" }, location.origin);
         return result;
@@ -546,6 +551,7 @@
         const result = el("div");
         const search = async () => {
           quickQuery = q.value.trim();
+          if (quickQuery.length < 2) throw Error(SEARCH_HINT);
           quickResults = await api("/search?q=" + encodeURIComponent(quickQuery));
           renderResults();
         };
@@ -863,6 +869,7 @@
           r.append(
             q,
             button("Find another printing", async () => {
+              if (q.value.trim().length < 2) throw Error(SEARCH_HINT);
               const results = await api("/search?q=" + encodeURIComponent(q.value));
               for (const candidate of results) {
                 if (!row.candidates.some((c) => c.printingId === candidate.printingId)) {
@@ -876,6 +883,10 @@
             }),
           );
           if (row.warning) r.append(el("p", row.warning, "warn"));
+          if (row.autoChosen && row.printingId)
+            r.append(
+              el("small", "Chosen automatically: " + row.autoChosen + ". Change it above if wrong.", "muted"),
+            );
           if (item.status === "applied")
             r.querySelectorAll("input,select,button").forEach((n) => (n.disabled = true));
           choices.push({ index, printing, excluded, zone, condition });
