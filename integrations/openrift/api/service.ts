@@ -6,6 +6,8 @@ import type {
   RifterDestination,
   RifterImportRow,
   RifterPreviewRequest,
+  RifterReplaceDiff,
+  RifterReplaceLine,
 } from "@openrift/shared/contracts/rifter";
 import postgres from "postgres";
 
@@ -13,6 +15,22 @@ import { parseInput } from "./parse.js";
 
 // Parse-time warning kept separately so a review choice cannot erase it.
 type StoredRow = RifterImportRow & { parseWarning?: string | null };
+// Tokens (SFD-T01 and the like, double-sided "A // B" names, catalog type token) are not
+// cards a collection tracks, so they start excluded. Runes (RAD-R03) are ordinary cards.
+const TOKEN_CODE = /^[A-Z]{2,8}-T\d+/iu;
+async function isTokenRow(
+  sql: DB,
+  row: { code?: string; name?: string },
+  found: RifterCandidate[],
+): Promise<boolean> {
+  if (row.code && TOKEN_CODE.test(row.code.trim())) return true;
+  if (row.name?.includes(" // ")) return true;
+  if (found.length && found.every((c) => TOKEN_CODE.test(c.code))) return true;
+  if (!found.length) return false;
+  const ids = [...new Set(found.map((c) => c.cardId))];
+  return (await sql`SELECT 1 FROM cards WHERE id IN ${sql(ids)} AND type::text='token' LIMIT 1`).length > 0;
+}
+const squash = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const MAX_PENDING_IMPORTS = 50;
 const DISCARD_AFTER_DAYS = 30;
 // Default printing rule for ambiguous rows. Values are the catalog slugs from
@@ -33,6 +51,29 @@ interface ImportRecord {
   raw_input: string;
   format: string;
   warnings: string[];
+}
+// Replace mode asks for an explicit extra acknowledgement above this share of removed copies.
+export const REMOVAL_ACK_SHARE = 0.5;
+/**
+ * Parse what is typed after a set picker: `12`, `012`, `r3`, `T5`, `149a`, `4-p`.
+ * Plain numbers pad to three digits (RAD-012); rune/token numbers (R03, T05) to two.
+ * Returns the code base (without letter modifier or promo suffix) and the full exact code.
+ */
+export function parseCardNumber(
+  setCode: string,
+  raw: string,
+): { base: string; exact: string; suffixed: boolean; set: string } | null {
+  const m = /^([A-Za-z]?)(\d{1,4})([A-Za-z*]?)(?:-([A-Za-z]+))?$/u.exec(raw.trim());
+  if (!m || !/^[A-Za-z]{2,8}$/u.test(setCode)) return null;
+  const [, letter = "", digits = "", modifier = "", promo = ""] = m;
+  const set = setCode.toUpperCase();
+  const base = `${set}-${letter.toUpperCase()}${digits.padStart(letter ? 2 : 3, "0")}`;
+  const exact = base + modifier.toUpperCase() + (promo ? "-" + promo.toUpperCase() : "");
+  return { base, exact, suffixed: Boolean(modifier || promo), set };
+}
+function toCandidate(value: unknown): RifterCandidate {
+  const { type, tags, ...candidate } = value as RifterCandidate & { type: string; tags: string[] };
+  return { ...candidate, name: legendDisplayName({ name: candidate.name, types: [type], tags }) };
 }
 export class RifterError extends Error {
   constructor(
@@ -133,16 +174,179 @@ export function createRifterService(databaseUrl: string) {
         AND (${query.artVariant ?? null}::text IS NULL OR f.art_variant=${query.artVariant ?? null})
       ORDER BY f.short_code,f.finish,f.language,p.id LIMIT 101`;
     if (found.length > 100 && !search) return []; // require a narrower explicit selection
-    return found.slice(0, 100).map((value) => {
-      const { type, tags, ...candidate } = value as unknown as RifterCandidate & {
-        type: string;
-        tags: string[];
-      };
-      return {
-        ...candidate,
-        name: legendDisplayName({ name: candidate.name, types: [type], tags }),
-      };
+    return found.slice(0, 100).map(toCandidate);
+  }
+  /**
+   * Quick entry by set + number: the exact number first, then its lettered / promo
+   * variants. Never returns other numbers (12 is not 120). The default rule marks
+   * one exact printing; ambiguity among exact printings stays visible.
+   */
+  async function searchByNumber(setCode: string, number: string): Promise<RifterCandidate[]> {
+    const parsed = parseCardNumber(setCode, number);
+    if (!parsed) return [];
+    // set and base are letters, digits and "-" only, so the pattern needs no escaping.
+    const pattern = `^${parsed.base}[A-Z*]?(-[A-Z]+)?$`;
+    const found = await db`
+      SELECT * FROM (
+        SELECT p.id AS "printingId", c.id AS "cardId", c.name, f.short_code AS code,
+          f.finish, f.language, f.art_variant AS "artVariant", c.type, c.tags,
+          upper(split_part(coalesce(f.public_code,''),'/',1)) AS pub, upper(f.short_code) AS sc
+        FROM printings p JOIN faces f ON f.id=p.face1_id JOIN cards c ON c.id=f.card_id
+        WHERE p.size='standard'
+          AND (upper(f.short_code) ~ ${pattern} OR upper(split_part(coalesce(f.public_code,''),'/',1)) ~ ${pattern})
+      ) x
+      ORDER BY (coalesce(nullif(pub,''),sc)=${parsed.exact} OR (${parsed.suffixed}::boolean AND sc=${parsed.exact})) DESC,
+        coalesce(nullif(pub,''),sc), finish, language, "printingId" LIMIT 101`;
+    const rows = found.slice(0, 100).map((v) => {
+      const { pub, sc, ...rest } = v as Record<string, unknown>;
+      const exact =
+        (pub || sc) === parsed.exact || (parsed.suffixed && sc === parsed.exact);
+      return { candidate: toCandidate(rest), exact };
     });
+    const out = rows.map(({ candidate, exact }) => ({
+      ...candidate,
+      match: exact ? ("exact" as const) : ("variant" as const),
+    }));
+    const exactOnes = out.filter((c) => c.match === "exact");
+    const pick =
+      exactOnes.length === 1
+        ? { candidate: exactOnes[0]!, note: "only printing of this number" }
+        : defaultPrinting(exactOnes, {});
+    for (const c of out)
+      if (pick && c.printingId === pick.candidate.printingId) {
+        c.isDefault = true;
+        c.defaultNote = pick.note;
+      }
+    return out;
+  }
+  async function search(q: { q?: string; set?: string; number?: string }) {
+    if (q.set && q.number) return await searchByNumber(q.set, q.number);
+    const text = q.q ?? "";
+    const code = /^([A-Za-z]{2,8})-(.+)$/u.exec(text);
+    if (code && parseCardNumber(code[1]!, code[2]!)) {
+      const found = await searchByNumber(code[1]!, code[2]!);
+      if (found.length) return found;
+    }
+    return await candidates(
+      db,
+      /^[A-Z]{2,8}-[A-Z]?\d+[a-z*]?$/iu.test(text) ? { code: text } : { name: text },
+      true,
+    );
+  }
+  async function sets() {
+    return await db`SELECT upper(split_part(f.short_code,'-',1)) AS code, min(s.name) AS name,
+        count(DISTINCT f.card_id)::int AS cards
+      FROM printings p JOIN faces f ON f.id=p.face1_id JOIN sets s ON s.id=f.set_id
+      WHERE p.size='standard' AND f.short_code ~ '^[A-Za-z]{2,8}-'
+      GROUP BY 1 ORDER BY min(s.sort_order), 1`;
+  }
+  /**
+   * Target state of a collection after a "replace" import, as a difference from its
+   * current copies. The file's quantities apply per resolved printing. Copies of the
+   * same card in a printing the file does not name stay; copies of cards the file
+   * never mentions are removed. Unresolved or excluded rows protect every card they
+   * could stand for. Existing copies keep their notes and grading: only surplus copies
+   * go (plain ones first, newest first) and only shortfalls are added.
+   */
+  async function planReplace(sql: DB, collectionId: string, all: StoredRow[], lock = false) {
+    const included = all.filter(
+      (r) =>
+        !r.excluded &&
+        r.printingId &&
+        !r.warning &&
+        r.candidates.some((c) => c.printingId === r.printingId),
+    );
+    const skippedRows = all.length - included.length;
+    const target = new Map<string, { quantity: number; row: StoredRow; info: RifterCandidate }>();
+    const mentioned = new Set<string>();
+    for (const row of included) {
+      const info = row.candidates.find((c) => c.printingId === row.printingId)!;
+      mentioned.add(info.cardId);
+      const entry = target.get(info.printingId);
+      if (entry) entry.quantity += row.quantity;
+      else target.set(info.printingId, { quantity: row.quantity, row, info });
+    }
+    // A row with no catalog candidates cannot stand for any card the user owns.
+    for (const row of all)
+      if (!included.includes(row)) for (const c of row.candidates) mentioned.add(c.cardId);
+    const query = lock
+      ? sql`SELECT cp.id,cp.printing_id AS "printingId",cp.created_at,f.card_id AS "cardId",c.name,f.short_code AS code,f.finish,f.language,
+          (cp.notes_public IS NOT NULL OR cp.notes_private IS NOT NULL OR cp.grader IS NOT NULL OR cp.is_altered OR jsonb_array_length(cp.links)>0) AS rich
+        FROM copies cp JOIN printings p ON p.id=cp.printing_id JOIN faces f ON f.id=p.face1_id JOIN cards c ON c.id=f.card_id
+        WHERE cp.collection_id=${collectionId} ORDER BY cp.created_at DESC,cp.id DESC FOR UPDATE OF cp`
+      : sql`SELECT cp.id,cp.printing_id AS "printingId",cp.created_at,f.card_id AS "cardId",c.name,f.short_code AS code,f.finish,f.language,
+          (cp.notes_public IS NOT NULL OR cp.notes_private IS NOT NULL OR cp.grader IS NOT NULL OR cp.is_altered OR jsonb_array_length(cp.links)>0) AS rich
+        FROM copies cp JOIN printings p ON p.id=cp.printing_id JOIN faces f ON f.id=p.face1_id JOIN cards c ON c.id=f.card_id
+        WHERE cp.collection_id=${collectionId} ORDER BY cp.created_at DESC,cp.id DESC`;
+    const current = (await query) as unknown as {
+      id: string;
+      printingId: string;
+      cardId: string;
+      name: string;
+      code: string;
+      finish: string;
+      language: string;
+      rich: boolean;
+    }[];
+    const byPrinting = new Map<string, typeof current>();
+    for (const copy of current) byPrinting.set(copy.printingId, [...(byPrinting.get(copy.printingId) ?? []), copy]);
+    const diff: RifterReplaceDiff = {
+      printings: { added: 0, removed: 0, changed: 0, unchanged: 0 },
+      copies: { added: 0, removed: 0, total: current.length, untouched: 0 },
+      lines: [],
+      skippedRows,
+      removalShare: 0,
+      needsRemovalAcknowledgement: false,
+      refusal: null,
+    };
+    const removeIds: string[] = [];
+    const additions: { row: StoredRow; count: number }[] = [];
+    if (!included.length) {
+      diff.refusal =
+        "Replace refused: the file has no resolvable rows, so nothing would be left to compare against. No cards were changed.";
+      return { diff, removeIds, additions };
+    }
+    for (const printingId of new Set([...target.keys(), ...byPrinting.keys()])) {
+      const have = byPrinting.get(printingId) ?? [];
+      const want = target.get(printingId);
+      if (!want && have[0] && mentioned.has(have[0].cardId)) {
+        diff.copies.untouched += have.length; // another finish/language of a card the file lists
+        continue;
+      }
+      const to = want?.quantity ?? 0;
+      const info = want?.info ?? have[0]!;
+      const line = (kind: RifterReplaceLine["kind"]): RifterReplaceLine => ({
+        kind,
+        printingId,
+        cardId: info.cardId,
+        name: info.name,
+        code: info.code,
+        finish: info.finish,
+        language: info.language,
+        from: have.length,
+        to,
+      });
+      if (have.length === to) {
+        diff.printings.unchanged++;
+        continue;
+      }
+      if (have.length > to) {
+        // Surplus: copies without notes or grading first, newest first within each group.
+        const order = [...have].sort((a, b) => Number(a.rich) - Number(b.rich));
+        const surplus = order.slice(0, have.length - to);
+        removeIds.push(...surplus.map((c) => c.id));
+        diff.copies.removed += surplus.length;
+      } else {
+        additions.push({ row: want!.row, count: to - have.length });
+        diff.copies.added += to - have.length;
+      }
+      const kind = have.length === 0 ? "added" : to === 0 ? "removed" : "changed";
+      diff.printings[kind]++;
+      diff.lines.push(line(kind));
+    }
+    diff.removalShare = current.length ? diff.copies.removed / current.length : 0;
+    diff.needsRemovalAcknowledgement = diff.removalShare > REMOVAL_ACK_SHARE;
+    return { diff, removeIds, additions };
   }
   async function preview(user: string, input: RifterPreviewRequest) {
     await authorize(db, user, input.destination);
@@ -161,13 +365,38 @@ export function createRifterService(databaseUrl: string) {
     }
     const rows: StoredRow[] = [];
     for (const row of parsed.rows) {
-      const found = await candidates(db, row);
+      let found = await candidates(db, row);
+      // Code wins: a code that matches exactly keeps its printings as candidates when only
+      // the name differs. A spelling that differs by punctuation or case alone is accepted
+      // like any match; any other difference leaves the row unresolved with a visible
+      // warning, so the user must choose the printing (accepting the card) before confirming.
+      let nameDiffers: string | null = null;
+      if (!found.length && row.code && row.name) {
+        const byCode = await candidates(db, { ...row, name: undefined });
+        if (byCode.length) {
+          found = byCode;
+          if (new Set(byCode.map((c) => squash(c.name))).size !== 1 || squash(byCode[0]!.name) !== squash(row.name))
+            nameDiffers = `Name differs from the catalog (${row.name} vs ${byCode[0]!.name}); check it is the right card, then choose the printing`;
+        }
+      }
+      const token = await isTokenRow(db, row, found);
+      const filtered = Boolean(row.finish || row.language || row.artVariant);
+      const reason: string | null = nameDiffers
+        ? nameDiffers
+        : found.length === 0
+          ? (row.code
+              ? `Code ${row.code} not found in the catalog${filtered ? " with the requested finish, language or art" : ""} (rune, token and promo codes may differ)`
+              : `No card named "${row.name}" in the catalog${filtered ? " with the requested finish, language or art" : ""}`) +
+            "; search and resolve or exclude this row"
+          : found.length > 1
+            ? "Choose a printing"
+            : null;
       // The default printing rule applies to collection destinations only. A deck
       // confirm would store the pick as preferred_printing_id, silently pinning the
       // card to one printing for strict-mode ownership, so deck rows keep every
       // choice visible and need an explicit selection.
       const auto =
-        input.destination.kind === "collection" ? defaultPrinting(found, row) : null;
+        input.destination.kind === "collection" && !nameDiffers ? defaultPrinting(found, row) : null;
       rows.push({
         input: row.input,
         quantity: row.quantity,
@@ -175,17 +404,19 @@ export function createRifterService(databaseUrl: string) {
         condition: row.condition,
         metadata: row.metadata,
         candidates: found,
-        printingId: found.length === 1 ? found[0]!.printingId : (auto?.candidate.printingId ?? null),
+        printingId: nameDiffers
+          ? null
+          : found.length === 1
+            ? found[0]!.printingId
+            : (auto?.candidate.printingId ?? null),
         ...(auto ? { autoChosen: auto.note } : {}),
-        excluded: false,
+        excluded: token,
+        ...(token ? { autoExcluded: "token" as const } : {}),
         parseWarning: row.warning ?? null,
-        warning:
-          row.warning ??
-          (found.length
-            ? found.length > 1 && !auto
-              ? "Choose a printing"
-              : null
-            : "No exact catalog match; search and resolve or exclude this row"),
+        ...(reason && !(auto && found.length > 1) ? { reason } : {}),
+        warning: token
+          ? "Ignored: token"
+          : (row.warning ?? (auto && !nameDiffers ? null : reason)),
       });
     }
     const fingerprint = createHash("sha256")
@@ -241,6 +472,8 @@ export function createRifterService(databaseUrl: string) {
         const row = rows[choice.index];
         if (!row) fail("Unknown review row");
         row.excluded = choice.excluded;
+        // Taking a token row back is the user's explicit decision: it is tracked like any card.
+        if (!choice.excluded) delete row.autoExcluded;
         // Any change of printing is the user's own choice, not the default rule.
         if (choice.printingId !== row.printingId) delete row.autoChosen;
         if (choice.printingId) {
@@ -259,12 +492,14 @@ export function createRifterService(databaseUrl: string) {
         if (choice.zone) row.zone = choice.zone;
         if (choice.condition !== undefined) row.condition = choice.condition;
         row.warning = choice.excluded
-          ? "Explicitly excluded"
+          ? row.autoExcluded
+            ? "Ignored: token"
+            : "Explicitly excluded"
           : row.parseWarning
             ? row.parseWarning
             : choice.printingId
             ? null
-            : "Unresolved";
+            : (row.reason ?? "Unresolved");
         if (
           !row.excluded &&
           row.condition &&
@@ -281,19 +516,32 @@ export function createRifterService(databaseUrl: string) {
   async function confirm(
     user: string,
     id: string,
-    input: { revision: number; acknowledgeDuplicate: boolean },
+    input: {
+      revision: number;
+      acknowledgeDuplicate: boolean;
+      acknowledgeRemoval?: boolean;
+      expectedChange?: { added: number; removed: number };
+    },
   ) {
     return await transaction(user, "Apply import / acquisition", async (tx) => {
       const item = await getImport(tx, user, id, true);
       if (item.status === "applied") return { id, status: "applied", alreadyApplied: true };
       if (item.revision !== input.revision) fail("Import changed; reload before confirming");
-      const duplicates =
-        await tx`SELECT id FROM rifter_imports WHERE user_id=${user} AND fingerprint=${item.fingerprint} AND status='applied' AND id<>${id}`;
+      const destination = item.destination as RifterDestination;
+      // Replace sets a target state, so applying the same file again is harmless; the
+      // duplicate acknowledgement belongs to add mode only.
+      const replacing = destination.kind !== "new-deck" && destination.mode === "replace";
+      const duplicates = replacing
+        ? []
+        : await tx`SELECT id FROM rifter_imports WHERE user_id=${user} AND fingerprint=${item.fingerprint} AND status='applied' AND id<>${id}`;
       if (duplicates.length && !input.acknowledgeDuplicate)
         fail("This input was applied before. Explicit duplicate acknowledgement required.");
-      const destination = item.destination as RifterDestination;
       await authorize(tx, user, destination);
       const rows = (item.rows as RifterImportRow[]).filter((r) => !r.excluded);
+      if (replacing && destination.kind === "collection" && !rows.length)
+        fail(
+          "Replace refused: the file has no resolvable rows, so nothing would be left to compare against. No cards were changed.",
+        );
       if (
         !rows.length ||
         rows.some(
@@ -308,16 +556,33 @@ export function createRifterService(databaseUrl: string) {
       if (new Set(existing.map((p) => p.id)).size !== new Set(ids).size)
         fail("Catalog changed; review again");
       let deckId: string | null = null;
-      if (destination.kind === "collection") {
+      let change: { added: number; removed: number } | undefined;
+      const addCopies = async (collectionId: string, row: RifterImportRow, quantity: number) => {
         // Copy metadata constraints are enforced by PostgreSQL in the same transaction.
-        if (destination.mode === "replace")
-          await tx`DELETE FROM copies WHERE collection_id=${destination.id}`;
-        for (const row of rows) {
-          await tx`INSERT INTO copies(collection_id,printing_id,condition,grader,grade,is_altered,notes_public,notes_private,links)
-            SELECT ${destination.id},${row.printingId},${row.condition},${row.metadata.grader ?? null},${row.metadata.grade ?? null},
-              ${row.metadata.isAltered ?? false},${row.metadata.notesPublic ?? null},${row.metadata.notesPrivate ?? null},${tx.json(row.metadata.links ?? [])}
-            FROM generate_series(1,${row.quantity})`;
-        }
+        await tx`INSERT INTO copies(collection_id,printing_id,condition,grader,grade,is_altered,notes_public,notes_private,links)
+          SELECT ${collectionId},${row.printingId},${row.condition},${row.metadata.grader ?? null},${row.metadata.grade ?? null},
+            ${row.metadata.isAltered ?? false},${row.metadata.notesPublic ?? null},${row.metadata.notesPrivate ?? null},${tx.json(row.metadata.links ?? [])}
+          FROM generate_series(1,${quantity}::int)`;
+      };
+      if (destination.kind === "collection" && destination.mode === "replace") {
+        const plan = await planReplace(tx, destination.id, item.rows, true);
+        const { diff } = plan;
+        if (diff.refusal) fail(diff.refusal);
+        change = { added: diff.copies.added, removed: diff.copies.removed };
+        if (
+          input.expectedChange &&
+          (input.expectedChange.added !== change.added || input.expectedChange.removed !== change.removed)
+        )
+          fail("The collection changed since the preview; review the replacement again");
+        if (diff.needsRemovalAcknowledgement && !input.acknowledgeRemoval)
+          fail(
+            `This import would remove ${diff.copies.removed} of ${diff.copies.total} copies (${Math.round(diff.removalShare * 100)}%). Explicit removal acknowledgement required.`,
+          );
+        await tx`SELECT set_config('rifter.label','Replace collection import',true)`;
+        if (plan.removeIds.length) await tx`DELETE FROM copies WHERE id IN ${tx(plan.removeIds)}`;
+        for (const add of plan.additions) await addCopies(destination.id, add.row, add.count);
+      } else if (destination.kind === "collection") {
+        for (const row of rows) await addCopies(destination.id, row, row.quantity);
       } else {
         if (destination.kind === "new-deck") {
           const [deck] =
@@ -340,7 +605,7 @@ export function createRifterService(databaseUrl: string) {
       const [action] =
         await tx`SELECT id FROM rifter_actions WHERE user_id=${user} AND transaction_id=pg_current_xact_id()`;
       await tx`UPDATE rifter_imports SET status='applied',applied_at=now(),applied_action_id=${action?.id ?? null},revision=revision+1 WHERE id=${id}`;
-      return { id, status: "applied", deckId, actionId: action?.id };
+      return { id, status: "applied", deckId, actionId: action?.id, change };
     });
   }
   async function overview(user: string) {
@@ -411,13 +676,24 @@ export function createRifterService(databaseUrl: string) {
     confirm,
     overview,
     gaps,
-    search: (q: string) =>
-      candidates(db, /^[A-Z]{2,8}-[A-Z]?\d+[a-z*]?$/iu.test(q) ? { code: q } : { name: q }, true),
+    search,
+    sets,
     import: async (user: string, id: string) => {
       const item = await getImport(db, user, id);
+      const destination = item.destination as RifterDestination;
+      const replacing = destination.kind === "collection" && destination.mode === "replace";
       const duplicates =
         await db`SELECT id,status,created_at FROM rifter_imports WHERE user_id=${user} AND fingerprint=${item.fingerprint} AND id<>${id} ORDER BY created_at DESC`;
-      return { ...item, duplicates };
+      let replaceDiff: RifterReplaceDiff | null = null;
+      if (replacing && item.status === "pending") {
+        try {
+          await authorize(db, user, destination);
+          replaceDiff = (await planReplace(db, destination.id, item.rows)).diff;
+        } catch {
+          replaceDiff = null; // collection deleted since the preview; confirm will refuse
+        }
+      }
+      return { ...item, duplicates: replacing ? [] : duplicates, replaceDiff };
     },
     setDeckStatus: (user: string, id: string, status: "active" | "aspiring") =>
       transaction(user, "Change deck status", async (tx) => {

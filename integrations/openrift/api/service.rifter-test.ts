@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 
+import { rifterSearchQuery } from "@openrift/shared/contracts/rifter";
+
 import { parseInput, csvRows } from "./parse.js";
-import { createRifterService } from "./service.js";
+import { createRifterService, parseCardNumber } from "./service.js";
 import { createShopping } from "./shopping.js";
 import { normalizeCatalog } from "./sync-catalog.js";
 
@@ -571,4 +573,383 @@ test("a narrowing step that would leave nothing is skipped", async () => {
   expect(second!.rows[0].candidates.length).toBe(2);
   expect(second!.rows[0].printingId).toBe(frBoth[1]);
   expect(second!.rows[0].autoChosen).toBe("normal finish (1 other printing)");
+});
+
+// ---------------------------------------------------------------- quick entry by set + digits
+let qe: Record<string, string> = {};
+beforeAll(async () => {
+  const card = async (label: string, rows: { code: string; pub: string; finish?: string; art?: string; markers?: string[] }[]) => {
+    const [c] =
+      await sql`INSERT INTO cards(name,slug,type) VALUES(${"Quick " + label + " " + user},${user + "-qe-" + label},'unit') RETURNING id`;
+    extraCards.push(c!.id);
+    for (const r of rows) {
+      const [f] =
+        await sql`INSERT INTO faces(card_id,set_id,short_code,public_code,art_variant,artist,rarity,finish,language,marker_slugs)
+        VALUES(${c!.id},${setId},${r.code},${r.pub},${r.art ?? "normal"},'Fixture','common',${r.finish ?? "normal"},'EN',${r.markers ?? []}) RETURNING id`;
+      const [p] = await sql`INSERT INTO printings(face1_id) VALUES(${f!.id}) RETURNING id`;
+      qe[`${r.pub}/${r.finish ?? "normal"}`] = p!.id;
+    }
+  };
+  await card("twelve", [
+    { code: "TST-112", pub: "TST-112" }, // wrong card: ends in 12
+    { code: "TST-120", pub: "TST-120" }, // wrong card: starts with 12
+    { code: "TST-2120", pub: "TST-2120" }, // wrong card: 212 followed by another digit
+  ]);
+  await card("a", [
+    { code: "TST-212", pub: "TST-212" },
+    { code: "TST-212", pub: "TST-212", finish: "foil" },
+    { code: "TST-212a", pub: "TST-212a", art: "altart" },
+    { code: "TST-212", pub: "TST-212-P", markers: ["promo"] },
+  ]);
+  await card("rune", [{ code: "TST-R03", pub: "TST-R03" }]);
+  await card("token", [{ code: "TST-T05", pub: "TST-T05" }]);
+});
+test("number parsing pads plain numbers to three digits and rune/token numbers to two", () => {
+  expect(parseCardNumber("rad", "12")!.exact).toBe("RAD-012");
+  expect(parseCardNumber("RAD", "012")!.exact).toBe("RAD-012");
+  expect(parseCardNumber("RAD", "120")!.exact).toBe("RAD-120");
+  expect(parseCardNumber("RAD", "r3")!.exact).toBe("RAD-R03");
+  expect(parseCardNumber("UNL", "t5")!.exact).toBe("UNL-T05");
+  expect(parseCardNumber("SFD", "149a")).toMatchObject({ base: "SFD-149", exact: "SFD-149A", suffixed: true });
+  expect(parseCardNumber("RAD", "76-p")!.exact).toBe("RAD-076-P");
+  expect(parseCardNumber("RAD", "abc")).toBeNull();
+});
+test("set + digits resolve exactly, with variants beneath and no unrelated numbers", async () => {
+  const found = await service.search({ set: "tst", number: "212" });
+  const exact = found.filter((c) => c.match === "exact");
+  expect(exact.map((c) => c.code)).toEqual(["TST-212", "TST-212"]);
+  expect(found.slice(0, exact.length)).toEqual(exact); // exact first
+  const variants = found.filter((c) => c.match === "variant").map((c) => c.printingId).sort();
+  expect(variants).toEqual([qe["TST-212a/normal"]!, qe["TST-212-P/normal"]!].sort());
+  expect(found.some((c) => /TST-(112|120|2120)/u.test(c.code))).toBe(false);
+  // The default rule picks the normal finish among the exact printings; the foil stays listed.
+  const picked = found.filter((c) => c.isDefault);
+  expect(picked.map((c) => c.printingId)).toEqual([qe["TST-212/normal"]!]);
+  expect(picked[0]!.defaultNote).toContain("normal finish");
+  expect(found.some((c) => c.printingId === qe["TST-212/foil"])).toBe(true);
+  // 12 pads to 012, which this fixture set does not have, and never matches 112 or 120.
+  expect(await service.search({ set: "TST", number: "12" })).toEqual([]);
+  // A letter or promo suffix makes that form the exact match.
+  const lettered = await service.search({ set: "TST", number: "212a" });
+  expect(lettered.filter((c) => c.match === "exact").map((c) => c.printingId)).toEqual([qe["TST-212a/normal"]!]);
+  const promo = await service.search({ set: "TST", number: "212-p" });
+  expect(promo.filter((c) => c.match === "exact").map((c) => c.printingId)).toEqual([qe["TST-212-P/normal"]!]);
+});
+test("rune and token numbers, full codes, short numbers and names still resolve", async () => {
+  expect((await service.search({ set: "TST", number: "r3" }))[0]).toMatchObject({ code: "TST-R03", match: "exact", isDefault: true });
+  expect((await service.search({ set: "TST", number: "T5" }))[0]).toMatchObject({ code: "TST-T05", match: "exact" });
+  expect((await service.search({ q: "TST-120" }))[0]).toMatchObject({ code: "TST-120", match: "exact" });
+  expect((await service.search({ q: "tst-20" })).length).toBe(0); // TST-020 does not exist, 120 is not 20
+  expect((await service.search({ q: "TST-R3" }))[0]).toMatchObject({ code: "TST-R03" });
+  expect((await service.search({ q: "Quick rune" }))[0]).toMatchObject({ code: "TST-R03" });
+  const sets = await service.sets();
+  expect(sets.find((x) => x.code === "TST")).toBeTruthy();
+});
+test("search validation allows one to three digits with a set but not a lone digit", () => {
+  expect(rifterSearchQuery.safeParse({ set: "RAD", number: "1" }).success).toBe(true);
+  expect(rifterSearchQuery.safeParse({ set: "RAD", number: "R03" }).success).toBe(true);
+  expect(rifterSearchQuery.safeParse({ set: "SFD", number: "149A" }).success).toBe(true);
+  expect(rifterSearchQuery.safeParse({ q: "1" }).success).toBe(false);
+  expect(rifterSearchQuery.safeParse({ q: "RAD-120" }).success).toBe(true);
+  expect(rifterSearchQuery.safeParse({ set: "RAD" }).success).toBe(false);
+  expect(rifterSearchQuery.safeParse({ number: "12" }).success).toBe(false);
+  expect(rifterSearchQuery.safeParse({ set: "R", number: "12" }).success).toBe(false);
+});
+
+// ---------------------------------------------------------------- replace a collection
+const binder = async (name = "Replace binder") =>
+  (await sql`INSERT INTO collections(user_id,name) VALUES(${user},${name}) RETURNING id`)[0]!.id as string;
+const seed = async (id: string, printingId: string, n: number, extra: Record<string, unknown> = {}): Promise<string[]> => {
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    ids.push(
+      (await sql`INSERT INTO copies(collection_id,printing_id,notes_private) VALUES(${id},${printingId},${(extra.notes as string) ?? null}) RETURNING id`)[0]!.id,
+    );
+    await Bun.sleep(3); // distinct created_at ordering
+  }
+  return ids;
+};
+const copiesOf = async (id: string) =>
+  (await sql`SELECT id,printing_id,notes_private FROM copies WHERE collection_id=${id} ORDER BY created_at,id`) as unknown as {
+    id: string;
+    printing_id: string;
+    notes_private: string | null;
+  }[];
+const replaceDest = (id: string) => ({ kind: "collection" as const, id, mode: "replace" as const });
+const stagedReplace = (id: string, raw: string, d: any = replaceDest(id)) =>
+  service.preview(user, { rawInput: raw, source: "Replace fixture", format: "text", destination: d });
+const apply = (p: any, extra: Record<string, unknown> = {}) =>
+  service.confirm(user, p.id, { revision: p.revision, acknowledgeDuplicate: false, ...extra } as any);
+let replaceFixture: { id: string; keepNotes: string; plainOld: string; newest: string };
+test("replace diff: adds, removes and changes per printing, keeping other finishes and copies with notes", async () => {
+  const id = await binder();
+  const [oldPlain, notes, newestPlain] = [
+    ...(await seed(id, enNormal, 1)),
+    ...(await seed(id, enNormal, 1, { notes: "keep me" })),
+    ...(await seed(id, enNormal, 1)),
+  ] as [string, string, string];
+  const [foilCopy] = await seed(id, enFoil, 1);
+  await seed(id, foilOnly, 2);
+  await seed(id, printing, 2); // card the file does not list at all
+  const p = await stagedReplace(id, "2 TST-010\n3 TST-030\n1 TST-040");
+  const record = await service.import(user, p!.id);
+  const diff = record.replaceDiff!;
+  expect(diff.refusal).toBeNull();
+  expect(diff.printings).toEqual({ added: 1, removed: 1, changed: 2, unchanged: 0 });
+  expect(diff.copies).toMatchObject({ added: 2, removed: 3, total: 8, untouched: 1 });
+  expect(diff.lines.filter((l) => l.kind === "removed").map((l) => l.printingId)).toEqual([printing]);
+  expect(record.duplicates).toEqual([]);
+  expect((await copiesOf(id)).length).toBe(8);
+  const result = await apply(p!, { expectedChange: { added: 2, removed: 3 } });
+  expect(result.change).toEqual({ added: 2, removed: 3 });
+  const after = await copiesOf(id);
+  const ids = after.map((c) => c.id);
+  expect(ids).toContain(notes); // metadata-bearing copy survives
+  expect(ids).toContain(oldPlain); // oldest plain copy kept
+  expect(ids).not.toContain(newestPlain); // surplus: newest plain copy goes
+  expect(ids).toContain(foilCopy!); // other finish of a listed card is left alone
+  const per = (pid: string) => after.filter((c) => c.printing_id === pid).length;
+  expect([per(enNormal), per(enFoil), per(foilOnly), per(artNormal), per(printing)]).toEqual([2, 1, 3, 1, 0]);
+  replaceFixture = { id, keepNotes: notes!, plainOld: oldPlain!, newest: newestPlain! };
+  const history = (await service.overview(user)).actions.find((a) => a.id === result.actionId)!;
+  expect(history.label).toBe("Replace collection import");
+});
+test("the same replace file applied again changes nothing and needs no duplicate acknowledgement", async () => {
+  const { id } = replaceFixture;
+  const before = await copiesOf(id);
+  const p = await stagedReplace(id, "2 TST-010\n3 TST-030\n1 TST-040");
+  const diff = (await service.import(user, p!.id)).replaceDiff!;
+  expect(diff.copies).toMatchObject({ added: 0, removed: 0 });
+  expect(diff.printings).toMatchObject({ added: 0, removed: 0, changed: 0, unchanged: 3 });
+  const again = await apply(p!);
+  expect(again.status).toBe("applied");
+  expect(again.change).toEqual({ added: 0, removed: 0 });
+  expect(again.actionId).toBeUndefined();
+  expect((await copiesOf(id)).map((c) => c.id)).toEqual(before.map((c) => c.id));
+});
+test("undoing a replace restores the removed copies with their original rows", async () => {
+  const id = await binder("Undo binder");
+  const [a, b] = (await seed(id, enNormal, 2, { notes: "orig" })) as [string, string];
+  await seed(id, printing, 1);
+  const p = await stagedReplace(id, "1 TST-010");
+  const done = await apply(p!, { acknowledgeRemoval: true });
+  expect((await copiesOf(id)).map((c) => c.id)).toEqual([a]);
+  await service.undo(user, done.actionId!);
+  const restored = await copiesOf(id);
+  expect(restored.map((c) => c.id).sort()).toEqual([a, b, restored.find((c) => c.printing_id === printing)!.id].sort());
+  expect(restored.filter((c) => c.printing_id === enNormal).every((c) => c.notes_private === "orig")).toBe(true);
+  expect((await service.import(user, p!.id)).status).toBe("undone");
+});
+test("replace refuses a file with no resolvable rows and never empties the collection", async () => {
+  const id = await binder("Refuse binder");
+  await seed(id, enNormal, 2);
+  const garbage = await stagedReplace(id, "1 NOPE-999");
+  expect(garbage!.rows[0].candidates.length).toBe(0);
+  await expect(apply(garbage!)).rejects.toThrow("Resolve");
+  const excluded = await service.review(user, garbage!.id, {
+    revision: garbage!.revision,
+    choices: [{ index: 0, printingId: null, excluded: true }],
+  });
+  await expect(apply(excluded!, { acknowledgeRemoval: true })).rejects.toThrow("Replace refused");
+  const unparsed = await service.preview(user, {
+    rawInput: 'code,name,count\nTST-001,"broken',
+    source: "bad",
+    format: "rifty",
+    destination: replaceDest(id),
+  });
+  await expect(apply(unparsed!, { acknowledgeRemoval: true })).rejects.toThrow("Replace refused");
+  expect((await service.import(user, excluded!.id)).replaceDiff!.refusal).toContain("no resolvable rows");
+  expect((await copiesOf(id)).length).toBe(2);
+});
+test("removing more than half of a collection needs an explicit acknowledgement", async () => {
+  const id = await binder("Big removal");
+  await seed(id, printing, 3);
+  await seed(id, enNormal, 1);
+  const half = await stagedReplace(id, "1 TST-010\n1 TST-001"); // removes 2 of 4: exactly half
+  expect((await service.import(user, half!.id)).replaceDiff!.needsRemovalAcknowledgement).toBe(false);
+  const big = await stagedReplace(id, "1 TST-010"); // removes 3 of 4
+  const diff = (await service.import(user, big!.id)).replaceDiff!;
+  expect(diff.needsRemovalAcknowledgement).toBe(true);
+  await expect(apply(big!)).rejects.toThrow("removal acknowledgement");
+  expect((await copiesOf(id)).length).toBe(4);
+  await expect(
+    apply(big!, { acknowledgeRemoval: true, expectedChange: { added: 0, removed: 1 } }),
+  ).rejects.toThrow("changed since the preview");
+  await apply(big!, { acknowledgeRemoval: true, expectedChange: { added: 0, removed: 3 } });
+  expect((await copiesOf(id)).length).toBe(1);
+});
+test("replace only works on the caller's own collections", async () => {
+  const id = await binder("Private binder");
+  await seed(id, enNormal, 1);
+  await expect(
+    service.preview(other, {
+      rawInput: "1 TST-010",
+      source: "",
+      format: "text",
+      destination: replaceDest(id),
+    }),
+  ).rejects.toThrow("not found");
+  const p = await stagedReplace(id, "1 TST-010");
+  await expect(service.confirm(other, p!.id, { revision: p!.revision, acknowledgeDuplicate: false })).rejects.toThrow("not found");
+});
+test("unresolved and excluded rows never cause the cards they could be to be deleted", async () => {
+  const id = await binder("Skipped rows");
+  const [altart] = (await sql`SELECT p.id FROM printings p JOIN faces f ON f.id=p.face1_id WHERE f.short_code='TST-021' AND f.art_variant='altart'`).map((r) => r.id as string);
+  await seed(id, altart!, 2);
+  await seed(id, enNormal, 1);
+  const p = await stagedReplace(id, "1 TST-001\n2 TST-021");
+  expect(p!.rows[1].printingId).toBeNull();
+  const pending = (await service.import(user, p!.id)).replaceDiff!;
+  expect(pending.skippedRows).toBe(1);
+  expect(pending.lines.map((l) => l.printingId)).toContain(enNormal); // genuinely absent card is removed
+  expect(pending.lines.map((l) => l.printingId)).not.toContain(altart); // ambiguous row protects its cards
+  await expect(apply(p!)).rejects.toThrow("Resolve"); // unresolved row blocks confirm
+  const reviewed = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [
+      { index: 0, printingId: printing, excluded: false },
+      { index: 1, printingId: null, excluded: true },
+    ],
+  });
+  const done = await apply(reviewed!, { acknowledgeRemoval: true });
+  expect(done.change).toEqual({ added: 1, removed: 1 });
+  const left = await copiesOf(id);
+  expect(left.filter((c) => c.printing_id === altart).length).toBe(2);
+  expect(left.filter((c) => c.printing_id === printing).length).toBe(1);
+  expect(left.filter((c) => c.printing_id === enNormal).length).toBe(0);
+});
+
+// ---------------------------------------------------------------- review triage
+test("a code that matches with a different name stays a visible candidate that needs acceptance", async () => {
+  const id = await binder("Name differs");
+  const p = await service.preview(user, {
+    rawInput: "code,name,count\nTST-010,Totally Other Name,2",
+    source: "Fixture",
+    format: "rifty",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  const row = p!.rows[0];
+  expect(row.candidates.length).toBe(3);
+  expect(row.printingId).toBeNull(); // never assigned silently, even though English/normal is the default
+  expect(row.autoChosen).toBeUndefined();
+  expect(row.warning).toBe(
+    `Name differs from the catalog (Totally Other Name vs ${defaultName}); check it is the right card, then choose the printing`,
+  );
+  await expect(apply(p!)).rejects.toThrow("Resolve");
+  const kept = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [{ index: 0, printingId: null, excluded: false }],
+  });
+  expect(kept!.rows[0].warning).toContain("Name differs"); // saving without a choice keeps the reason
+  const accepted = await service.review(user, p!.id, {
+    revision: kept!.revision,
+    choices: [{ index: 0, printingId: enNormal, excluded: false }],
+  });
+  expect(accepted!.rows[0].warning).toBeNull();
+  await apply(accepted!);
+  expect((await copiesOf(id)).map((c) => c.printing_id)).toEqual([enNormal, enNormal]);
+});
+test("a name that differs only by punctuation or case is not a warning", async () => {
+  const id = await binder("Punctuation");
+  const p = await service.preview(user, {
+    rawInput: "code,name,count\nTST-010," + defaultName.replace(" default ", " - DEFAULT ") + ",1",
+    source: "Fixture",
+    format: "rifty",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  expect(p!.rows[0].warning).toBeNull();
+  expect(p!.rows[0].printingId).toBe(enNormal);
+});
+test("an unmatched row says why in plain words and keeps saying it after a save", async () => {
+  const id = await binder("Unmatched");
+  const p = await service.preview(user, {
+    rawInput: "1 NOPE-999\n1 Nonexistent Card Zzz",
+    source: "Fixture",
+    format: "text",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  expect(p!.rows[0].warning).toContain("Code NOPE-999 not found in the catalog");
+  expect(p!.rows[0].warning).toContain("rune, token and promo codes may differ");
+  expect(p!.rows[1].warning).toContain('No card named "Nonexistent Card Zzz"');
+  const saved = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [
+      { index: 0, printingId: null, excluded: false },
+      { index: 1, printingId: null, excluded: true },
+    ],
+  });
+  expect(saved!.rows[0].warning).toContain("not found in the catalog");
+  expect(saved!.rows[1].warning).toBe("Explicitly excluded");
+  const undone = await service.review(user, p!.id, {
+    revision: saved!.revision,
+    choices: [{ index: 1, printingId: null, excluded: false }],
+  });
+  expect(undone!.rows[1].warning).toContain("No card named");
+});
+
+test("token rows start excluded and visible; runes do not; the user can take a token back", async () => {
+  const id = await binder("Tokens");
+  const p = await service.preview(user, {
+    rawInput: "code,name,count\nTST-T05,Some Token,3\nTST-R03,Quick rune user,2\nTST-010," + defaultName + " // Back,1\nTST-010," + defaultName + ",1",
+    source: "Fixture",
+    format: "rifty",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  const rows = p!.rows;
+  // T05 is not in the catalog as TST-T05 here, but the code alone marks it a token.
+  expect(rows[0]).toMatchObject({ excluded: true, autoExcluded: "token", warning: "Ignored: token" });
+  expect(rows[1].autoExcluded).toBeUndefined(); // rune: ordinary tracked card
+  expect(rows[1].excluded).toBe(false);
+  expect(rows[2]).toMatchObject({ excluded: true, autoExcluded: "token" }); // double-sided name
+  expect(rows[3].excluded).toBe(false);
+  // Saving keeps the token ignored and its reason; unticking exclude is the explicit override.
+  const kept = await service.review(user, p!.id, {
+    revision: p!.revision,
+    choices: [{ index: 0, printingId: null, excluded: true }],
+  });
+  expect(kept!.rows[0]).toMatchObject({ excluded: true, autoExcluded: "token", warning: "Ignored: token" });
+  const back = await service.review(user, p!.id, {
+    revision: kept!.revision,
+    choices: [{ index: 2, printingId: enNormal, excluded: false }],
+  });
+  expect(back!.rows[2].autoExcluded).toBeUndefined();
+  expect(back!.rows[2].excluded).toBe(false);
+  expect(back!.rows[2].warning).toBeNull();
+});
+test("a token resolved to a catalog printing by name is ignored by its catalog code, runes never", async () => {
+  const [c] = await sql`INSERT INTO cards(name,slug,type) VALUES(${"Token card " + user},${user + "-tok"},'unit') RETURNING id`;
+  extraCards.push(c!.id);
+  const [f] = await sql`INSERT INTO faces(card_id,set_id,short_code,public_code,art_variant,artist,rarity,finish,language)
+    VALUES(${c!.id},${setId},'TST-T77','TST-T77','normal','Fixture','common','normal','EN') RETURNING id`;
+  const [tp] = await sql`INSERT INTO printings(face1_id) VALUES(${f!.id}) RETURNING id`;
+  const id = await binder("Token by name");
+  const p = await service.preview(user, {
+    rawInput: "1 Token card " + user + "\n1 TST-R03",
+    source: "Fixture",
+    format: "text",
+    destination: { kind: "collection", id, mode: "add" },
+  });
+  expect(p!.rows[0]).toMatchObject({ excluded: true, autoExcluded: "token", printingId: tp!.id });
+  expect(p!.rows[1].autoExcluded).toBeUndefined();
+});
+test("replace never deletes owned copies because a token row was auto-excluded", async () => {
+  const id = await binder("Replace tokens");
+  const [tokCard] = (await sql`SELECT f.card_id AS id FROM faces f WHERE f.short_code='TST-T77'`).map((r) => r.id as string);
+  const [tokPrinting] = (await sql`SELECT p.id FROM printings p JOIN faces f ON f.id=p.face1_id WHERE f.short_code='TST-T77'`).map((r) => r.id as string);
+  expect(tokCard).toBeTruthy();
+  await seed(id, tokPrinting!, 2);
+  await seed(id, enNormal, 1);
+  const p = await stagedReplace(id, "2 TST-010\n5 TST-T77");
+  expect(p!.rows[1].autoExcluded).toBe("token");
+  const diff = (await service.import(user, p!.id)).replaceDiff!;
+  expect(diff.skippedRows).toBe(1);
+  expect(diff.lines.map((l) => l.printingId)).not.toContain(tokPrinting);
+  const done = await apply(p!);
+  expect(done.change).toEqual({ added: 1, removed: 0 });
+  const left = await copiesOf(id);
+  expect(left.filter((c) => c.printing_id === tokPrinting).length).toBe(2); // untouched, not set to 5
+  expect(left.filter((c) => c.printing_id === enNormal).length).toBe(2);
+  // A file that is only tokens leaves nothing to compare: replace is refused.
+  const tokensOnly = await stagedReplace(id, "1 TST-T77");
+  await expect(apply(tokensOnly!, { acknowledgeRemoval: true })).rejects.toThrow("Replace refused");
 });

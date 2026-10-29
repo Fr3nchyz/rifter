@@ -223,6 +223,47 @@
       .scroll {
         overflow: auto;
       }
+      [hidden] {
+        display: none !important;
+      }
+      .rowgrid {
+        display: grid;
+        grid-template-columns: minmax(200px, 1.1fr) minmax(240px, 1.6fr) minmax(190px, 1fr);
+        gap: 8px 22px;
+        align-items: start;
+        border-left: 5px solid var(--line);
+        padding-left: 14px;
+      }
+      .rowgrid h3 {
+        margin: 0 0 4px;
+      }
+      .chip {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        border: 1px solid currentColor;
+        margin-bottom: 6px;
+      }
+      .chip:empty {
+        display: none;
+      }
+      .tone-ok { border-left-color: #4ade80; }
+      .tone-auto { border-left-color: #60a5fa; }
+      .tone-need { border-left-color: #fbbf24; }
+      .tone-bad { border-left-color: #f87171; }
+      .tone-off { border-left-color: #94a3b8; opacity: 0.8; }
+      .chip.ok { color: #4ade80; }
+      .chip.auto { color: #60a5fa; }
+      .chip.need { color: #fbbf24; }
+      .chip.bad { color: #f87171; }
+      .chip.off { color: #94a3b8; }
+      @media (max-width: 700px) {
+        .rowgrid {
+          grid-template-columns: 1fr;
+        }
+      }
       .entry {
         padding: 16px 0;
         border-bottom: 1px solid var(--line);
@@ -347,7 +388,16 @@
         batch = [],
         quickResults = [],
         quickQuery = "",
+        quickSets = null,
+        quickSet = "",
+        focusQuick = false,
+        replaceIntent = false,
         selectedDeck = null;
+      try {
+        quickSet = localStorage.getItem("rifter.quickSet") || "";
+      } catch {
+        /* remembered set is only a convenience */
+      }
       const $ = (s) => document.querySelector(s);
       function el(tag, text, cls) {
         const node = document.createElement(tag);
@@ -412,7 +462,7 @@
         parent.append(l);
         return i;
       }
-      const SEARCH_HINT = "Type at least 2 letters or part of a card code";
+      const SEARCH_HINT = "Type at least 2 letters, a card code, or choose a set and a number";
       async function api(path, method = "GET", data) {
         const response = await fetch(API + path, {
           method,
@@ -541,18 +591,57 @@
       function candidateLabel(c) {
         return [c.code, c.name, c.finish, c.language, c.artVariant].filter(Boolean).join(" · ");
       }
+      const NUMBER_ONLY = /^[A-Za-z]?\d{1,4}[A-Za-z*]?(-[A-Za-z]+)?$/u;
+      async function loadQuickSets() {
+        try {
+          quickSets = await api("/search/sets");
+        } catch {
+          quickSets = [];
+        }
+        if (tab === "quick") render();
+      }
       function quick(content) {
+        if (quickSets === null) {
+          quickSets = [];
+          run(loadQuickSets);
+        }
         const c = box(
           "Add new acquisitions",
-          "Type a collector code such as RAD-120 or OGN-123, or search by card name. Choose the exact printing before adding it to your batch.",
+          "Choose a set once, then type only the number: 12 finds RAD-012. A full code (RAD-120) or a card name also works. Choose the exact printing before adding it to your batch.",
         );
+        const setPicker = field(
+          c,
+          "Set",
+          select([
+            ["", "Any set (type a full code or name)"],
+            ...quickSets.map((x) => [x.code, x.code + " · " + x.name]),
+          ]),
+        );
+        if (quickSet && !quickSets.some((x) => x.code === quickSet) && quickSets.length) quickSet = "";
+        setPicker.value = quickSet;
+        setPicker.onchange = () => {
+          quickSet = setPicker.value;
+          try {
+            localStorage.setItem("rifter.quickSet", quickSet);
+          } catch {
+            /* ignore blocked storage */
+          }
+          q.focus();
+        };
         const q = field(c, "Collector code or card name", input(quickQuery));
-        q.placeholder = "OGN-123";
+        q.placeholder = quickSet ? "Number, for example 12" : "OGN-123";
+        q.autocomplete = "off";
         const result = el("div");
         const search = async () => {
           quickQuery = q.value.trim();
-          if (quickQuery.length < 2) throw Error(SEARCH_HINT);
-          quickResults = await api("/search?q=" + encodeURIComponent(quickQuery));
+          if (quickSet && NUMBER_ONLY.test(quickQuery))
+            quickResults = await api(
+              "/search?set=" + encodeURIComponent(quickSet) + "&number=" + encodeURIComponent(quickQuery),
+            );
+          else {
+            if (quickQuery.length < 2) throw Error(SEARCH_HINT);
+            quickResults = await api("/search?q=" + encodeURIComponent(quickQuery));
+          }
           renderResults();
         };
         const form = el("form");
@@ -562,30 +651,58 @@
           run(search);
         };
         c.append(form, button("Find card", search, true), result);
+        function addToBatch(candidate) {
+          const found = batch.find((b) => b.candidate.printingId === candidate.printingId);
+          if (found) found.quantity++;
+          else batch.push({ candidate, quantity: 1 });
+          // Ready for the next number: the set stays selected.
+          quickQuery = "";
+          quickResults = [];
+          focusQuick = true;
+          render();
+        }
         function renderResults() {
           result.replaceChildren();
           if (!quickResults.length) {
             result.append(
-              el("p", "No catalog matches. Check the code or load the catalog first.", "muted"),
+              el(
+                "p",
+                quickSet && NUMBER_ONLY.test(quickQuery)
+                  ? "No " + quickSet + " card numbered " + quickQuery + " in the catalog."
+                  : "No catalog matches. Check the code or load the catalog first.",
+                "muted",
+              ),
             );
             return;
           }
-          for (const candidate of quickResults) {
-            const r = el("div", null, "entry");
-            r.append(
-              el("div", candidateLabel(candidate)),
-              button("Add to batch", () => {
-                const found = batch.find((b) => b.candidate.printingId === candidate.printingId);
-                if (found) found.quantity++;
-                else batch.push({ candidate, quantity: 1 });
-                render();
-              }),
-            );
-            result.append(r);
+          const groups = [];
+          if (quickResults.some((x) => x.match)) {
+            const exact = quickResults.filter((x) => x.match === "exact");
+            const variants = quickResults.filter((x) => x.match === "variant");
+            if (exact.length) groups.push(["Exact match", exact]);
+            if (variants.length)
+              groups.push([exact.length ? "Variants of this number" : "No exact match; variants of this number", variants]);
+          } else groups.push([null, quickResults]);
+          for (const [title, list] of groups) {
+            if (title) result.append(el("h3", title));
+            for (const candidate of list) {
+              const r = el("div", null, "entry");
+              r.append(el("div", candidateLabel(candidate)));
+              if (candidate.isDefault)
+                r.append(el("small", "Default printing: " + candidate.defaultNote, "muted"));
+              r.append(button(candidate.isDefault ? "Add default printing" : "Add to batch", () => addToBatch(candidate), Boolean(candidate.isDefault)));
+              result.append(r);
+            }
+            if (title === "Exact match" && list.length > 1 && !list.some((x) => x.isDefault))
+              result.append(el("p", "Several printings share this number; choose one.", "warn"));
           }
         }
         if (quickResults.length) renderResults();
         content.append(c);
+        if (focusQuick) {
+          focusQuick = false;
+          setTimeout(() => q.focus(), 0);
+        }
         const b = box(
           "Acquisition batch",
           batch.length
@@ -657,10 +774,39 @@
           review(content);
           return;
         }
+        const replacing = replaceIntent && state.collections.length > 0;
+        if (!replacing) {
+          const entry = box(
+            "Replace a collection",
+            "Keep a binder in sync with a file: its counts become the target. You see exactly what would be added, removed or changed before anything happens, and History can undo it.",
+          );
+          entry.append(
+            button(
+              "Replace a collection from a file",
+              () => {
+                replaceIntent = true;
+                render();
+              },
+              true,
+            ),
+          );
+          if (!state.collections.length)
+            entry.append(el("p", "Create a collection in OpenRift first.", "muted"));
+          content.append(entry);
+        }
         const c = box(
-          "Quarantine a new list",
-          "Paste a deck or collection export. Choose where it belongs; no collection or deck changes happen at this step.",
+          replacing ? "Replace a collection" : "Quarantine a new list",
+          replacing
+            ? "Choose the collection and the file. Nothing changes until you review the difference and confirm."
+            : "Paste a deck or collection export. Choose where it belongs; no collection or deck changes happen at this step.",
         );
+        if (replacing)
+          c.append(
+            button("← Back to all imports", () => {
+              replaceIntent = false;
+              render();
+            }),
+          );
         const format = field(
           c,
           "Input format",
@@ -688,9 +834,9 @@
           c,
           "Destination",
           select([
-            ["new", "New deck"],
+            ...(replacing ? [] : [["new", "New deck (create a deck from this list)"]]),
             ...state.collections.map((x) => ["collection:" + x.id, "Collection · " + x.name]),
-            ...state.decks.map((x) => ["deck:" + x.id, "Deck · " + x.name]),
+            ...(replacing ? [] : state.decks.map((x) => ["deck:" + x.id, "Existing deck · " + x.name])),
           ]),
         );
         const name = field(c, "New deck name", input("New aspiring deck"));
@@ -704,27 +850,72 @@
         );
         const mode = field(
           c,
-          "Existing destination behavior",
-          select([
-            ["add", "Add quantities"],
-            ["replace", "Replace contents — removes existing cards"],
-          ]),
+          "What to do with the file",
+          select(
+            [
+              ["add", "Add cards"],
+              ["replace", "Replace — make the collection match the file"],
+            ],
+            replacing ? "replace" : "add",
+          ),
         );
         const replacement = check(
           c,
-          "I understand that replacing contents removes the current cards (recoverable through history).",
+          "Decks only: I understand that replacing a deck removes its current cards (recoverable through history).",
         );
+        // Collection exports (CSV) default to a collection; decks and card lists to a new deck.
+        const CSV_FORMATS = ["rifty", "openrift", "piltover-csv"];
+        const preferredCollection = () =>
+          (state.collections.find((x) => /^my collection$/iu.test(x.name)) || state.collections[0])?.id;
+        let pickedByUser = false;
+        const hint = el(
+          "small",
+          "Deck imports ask you to choose a printing for each card; choose a collection to use English / normal finish automatically.",
+          "warn",
+        );
+        target.after(hint);
+        const defaultDestination = () => {
+          if (replacing || pickedByUser) return;
+          const wanted =
+            CSV_FORMATS.includes(format.value) && state.collections.length
+              ? "collection:" + preferredCollection()
+              : "new";
+          if ([...target.options].some((o) => o.value === wanted)) target.value = wanted;
+        };
+        const syncDestination = () => {
+          const kind = target.value.split(":")[0];
+          hint.hidden = !(kind !== "collection" && CSV_FORMATS.includes(format.value));
+          for (const [node, show] of [
+            [name, kind === "new"],
+            [status, kind === "new"],
+            [mode, kind !== "new" && !replacing],
+          ]) {
+            node.hidden = !show;
+            node.previousElementSibling.hidden = !show;
+          }
+          replacement.parentElement.hidden = kind !== "deck";
+        };
+        target.onchange = () => {
+          pickedByUser = true;
+          syncDestination();
+        };
+        format.onchange = () => {
+          defaultDestination();
+          syncDestination();
+        };
+        defaultDestination();
+        syncDestination();
         c.append(
           button(
-            "Create review preview",
+            replacing ? "Compare with the collection" : "Create review preview",
             async () => {
               let destination;
               if (target.value === "new")
                 destination = { kind: "new-deck", name: name.value, status: status.value };
               else {
                 const [kind, id] = target.value.split(":");
-                if (mode.value === "replace" && !replacement.checked)
-                  throw Error("Acknowledge replacement before continuing");
+                if (kind === "deck" && mode.value === "replace" && !replacement.checked)
+                  throw Error("Acknowledge deck replacement before continuing");
                 destination = { kind, id, mode: mode.value };
               }
               const item = await api("/imports", "POST", {
@@ -733,6 +924,7 @@
                 format: format.value,
                 destination,
               });
+              replaceIntent = false;
               current = await api("/imports/" + item.id);
               await load();
             },
@@ -761,6 +953,72 @@
           inbox.append(r);
         }
         content.append(inbox);
+      }
+      const plural = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+      function replaceSummary(diff) {
+        const b = el("div", null, "entry");
+        b.append(el("h2", "What replacing will do"));
+        if (diff.refusal) {
+          b.append(el("p", diff.refusal, "error"));
+          return b;
+        }
+        const grid = el("div", null, "grid");
+        for (const [label, value] of [
+          ["Cards added", diff.printings.added],
+          ["Cards removed", diff.printings.removed],
+          ["Quantity changed", diff.printings.changed],
+          ["Unchanged", diff.printings.unchanged],
+        ]) {
+          const g = box();
+          g.append(el("div", label, "eyebrow"), el("div", value, "stat"));
+          grid.append(g);
+        }
+        b.append(
+          grid,
+          el(
+            "p",
+            "Copies: +" + diff.copies.added + " added, −" + diff.copies.removed + " removed, out of " +
+              plural(diff.copies.total, "copy") + " now in this collection.",
+          ),
+        );
+        if (diff.copies.untouched)
+          b.append(
+            el(
+              "p",
+              plural(diff.copies.untouched, "copy") +
+                " of other finishes or languages of listed cards are left alone.",
+              "muted",
+            ),
+          );
+        if (diff.skippedRows)
+          b.append(
+            el(
+              "p",
+              plural(diff.skippedRows, "row") +
+                " unresolved or excluded: no copy of the cards they could be is removed or added.",
+              "warn",
+            ),
+          );
+        const label = (l) => [l.code, l.name, l.finish, l.language].filter(Boolean).join(" · ");
+        const removals = diff.lines.filter((l) => l.kind === "removed" || (l.kind === "changed" && l.to < l.from));
+        if (removals.length) {
+          b.append(el("h3", "Will be removed — check this list (" + plural(diff.copies.removed, "copy") + ")", "warn"));
+          const list = el("ul");
+          for (const l of removals)
+            list.append(el("li", l.from + " → " + l.to + " · " + label(l) + (l.kind === "removed" ? " (all removed)" : "")));
+          b.append(list);
+        } else b.append(el("p", "Nothing will be removed.", "notice"));
+        const gains = diff.lines.filter((l) => l.kind === "added" || (l.kind === "changed" && l.to > l.from));
+        if (gains.length) {
+          const d = el("details");
+          d.append(el("summary", "Will be added (" + plural(diff.copies.added, "copy") + ")"));
+          const list = el("ul");
+          for (const l of gains) list.append(el("li", l.from + " → " + l.to + " · " + label(l)));
+          d.append(list);
+          b.append(d);
+        }
+        if (!diff.lines.length) b.append(el("p", "The collection already matches this file; confirming changes nothing.", "notice"));
+        return b;
       }
       function review(content) {
         const item = current,
@@ -811,10 +1069,20 @@
           content.append(c);
           return;
         }
+        const isReplace = item.destination.kind === "collection" && item.destination.mode === "replace";
+        if (isReplace && item.replaceDiff) c.append(replaceSummary(item.replaceDiff));
         const choices = [];
+        const toolbar = el("div", null, "entry");
+        if (item.status === "pending") c.append(toolbar);
+        const list = el("div", null, "rows");
+        c.append(list);
         item.rows.forEach((row, index) => {
-          const r = el("div", null, "entry");
-          r.append(
+          const r = el("div", null, "entry rowgrid");
+          const left = el("div"),
+            mid = el("div"),
+            right = el("div");
+          r.append(left, mid, right);
+          left.append(
             el(
               "h3",
               row.quantity +
@@ -824,7 +1092,7 @@
             el("small", row.input),
           );
           const printing = field(
-            r,
+            mid,
             "Printing",
             select(
               [
@@ -835,7 +1103,7 @@
             ),
           );
           const zone = field(
-            r,
+            mid,
             "Deck section",
             select(
               [
@@ -850,7 +1118,11 @@
               row.zone,
             ),
           );
-          if (item.destination.kind === "collection") zone.parentElement && (zone.hidden = true);
+          if (item.destination.kind === "collection") {
+            // Sections only apply to decks.
+            zone.hidden = true;
+            zone.previousElementSibling.hidden = true;
+          }
           const conditionOptions = [
             ["", "Unrecorded"],
             ...["mint", "near-mint", "excellent", "good", "light-played", "played", "poor"].map(
@@ -859,16 +1131,20 @@
           ];
           if (row.condition && !conditionOptions.some((x) => x[0] === row.condition))
             conditionOptions.push([row.condition, "Unrecognized: " + row.condition]);
-          const condition = field(r, "Condition", select(conditionOptions, row.condition || ""));
-          if (row.metadata.grader) condition.disabled = true;
-          const excluded = check(r, "Exclude this row (retained in history)");
+          const chip = el("span", null, "chip");
+          const excluded = check(right, "Exclude this row (retained in history)");
           excluded.checked = row.excluded;
+          const condition = field(right, "Condition", select(conditionOptions, row.condition || ""));
+          if (row.metadata.grader) condition.disabled = true;
+          right.prepend(chip);
           const q = input();
           q.placeholder = "Search code or exact card name";
           q.setAttribute("aria-label", "Resolve row " + (index + 1));
-          r.append(
+          const finder = el("details");
+          finder.append(
+            el("summary", "Find another printing"),
             q,
-            button("Find another printing", async () => {
+            button("Search", async () => {
               if (q.value.trim().length < 2) throw Error(SEARCH_HINT);
               const results = await api("/search?q=" + encodeURIComponent(q.value));
               for (const candidate of results) {
@@ -882,24 +1158,43 @@
               if (!results.length) throw Error("No matching printings");
             }),
           );
-          if (row.warning) r.append(el("p", row.warning, "warn"));
+          mid.append(finder);
+          if (row.warning) right.append(el("p", row.warning, "warn"));
           if (row.autoChosen && row.printingId)
-            r.append(
+            mid.append(
               el("small", "Chosen automatically: " + row.autoChosen + ". Change it above if wrong.", "muted"),
             );
           if (item.status === "applied")
             r.querySelectorAll("input,select,button").forEach((n) => (n.disabled = true));
-          choices.push({ index, printing, excluded, zone, condition });
-          c.append(r);
+          const x = { index, printing, excluded, zone, condition, row, node: r, chip };
+          choices.push(x);
+          printing.addEventListener("change", () => choices.updateSummary?.());
+          excluded.addEventListener("change", () => choices.updateSummary?.());
+          list.append(r);
         });
         const details = el("details");
         details.append(el("summary", "Original source input"), el("pre", item.raw_input));
         c.append(details);
         if (item.status === "pending") {
-          const duplicate = check(
-            c,
-            "I acknowledge any previously applied duplicate and intend to add this list again.",
-          );
+          const duplicate = isReplace
+            ? { checked: false }
+            : check(
+                c,
+                "I acknowledge any previously applied duplicate and intend to add this list again.",
+              );
+          const removal =
+            isReplace && item.replaceDiff?.needsRemovalAcknowledgement
+              ? check(
+                  c,
+                  "I understand this removes " +
+                    item.replaceDiff.copies.removed +
+                    " of " +
+                    item.replaceDiff.copies.total +
+                    " copies (" +
+                    Math.round(item.replaceDiff.removalShare * 100) +
+                    "%) and that History can undo it.",
+                )
+              : null;
           const save = async () => {
             await api("/imports/" + item.id, "PATCH", {
               revision: current.revision,
@@ -913,6 +1208,88 @@
             });
             current = await api("/imports/" + item.id);
           };
+          // Live triage of the rows: what is ready, what still blocks confirmation, and why.
+          const rowStatus = (x) => {
+            if (x.excluded.checked) return x.row.autoExcluded ? "token" : "excluded";
+            if (!x.printing.value) return x.row.candidates.length ? "printing" : "unmatched";
+            if (x.row.parseWarning) return "other";
+            return x.row.autoChosen && x.printing.value === x.row.printingId ? "auto" : "ready";
+          };
+          const OK = ["ready", "auto", "excluded", "token"];
+          const CHIPS = {
+            ready: ["Ready", "ok"],
+            auto: ["Auto-chosen: " + "default printing", "auto"],
+            printing: ["Needs a printing", "need"],
+            unmatched: ["No match", "bad"],
+            other: ["Check warning", "need"],
+            excluded: ["Excluded", "off"],
+            token: ["Ignored: token", "off"],
+          };
+          const paint = (x) => {
+            const st = rowStatus(x);
+            const [text, tone] = CHIPS[st];
+            x.chip.textContent = st === "auto" && x.row.autoChosen ? "Auto-chosen: " + x.row.autoChosen.replace(/ \(.*\)$/u, "") : text;
+            x.chip.className = "chip " + tone;
+            x.node.className = "entry rowgrid tone-" + tone;
+          };
+          const PRIORITY = { unmatched: 0, printing: 1, other: 2, auto: 3, ready: 4, excluded: 5, token: 6 };
+          const summary = el("p", null, "notice");
+          const only = check(toolbar, "Show only rows that need attention");
+          const applyFilter = () => {
+            // Problem rows first while the filter is on; file order otherwise.
+            const ordered = only.checked
+              ? [...choices].sort((a, b) => PRIORITY[rowStatus(a)] - PRIORITY[rowStatus(b)] || a.index - b.index)
+              : choices;
+            list.append(...ordered.map((x) => x.node));
+            choices.forEach((x) => {
+              x.node.hidden = only.checked && OK.includes(rowStatus(x));
+            });
+          };
+          const counts = () => {
+            const n = { ready: 0, auto: 0, excluded: 0, token: 0, printing: 0, unmatched: 0, other: 0 };
+            choices.forEach((x) => n[rowStatus(x)]++);
+            n.ready += n.auto;
+            return n;
+          };
+          const attentionText = (n) =>
+            n.printing + n.unmatched + n.other + " need attention (" +
+            [
+              n.unmatched ? n.unmatched + " unmatched" : "",
+              n.printing ? n.printing + " need a printing" : "",
+              n.other ? n.other + " with warnings" : "",
+            ].filter(Boolean).join(", ") + ")";
+          choices.updateSummary = () => {
+            const n = counts();
+            const m = n.printing + n.unmatched + n.other;
+            summary.textContent =
+              n.ready + " rows ready, " + (m ? attentionText(n) : "none need attention") +
+              (n.excluded ? ", " + n.excluded + " excluded" : "") +
+              (n.token ? ", " + plural(n.token, "token") + " ignored" : "") + ".";
+            choices.forEach(paint);
+            summary.className = m ? "warn" : "notice";
+          };
+          toolbar.prepend(summary);
+          const unmatchedTotal = counts().unmatched;
+          if (unmatchedTotal)
+            toolbar.append(
+              button("Exclude all " + unmatchedTotal + " unmatched rows", async () => {
+                const targets = choices.filter((x) => rowStatus(x) === "unmatched");
+                targets.forEach((x) => (x.excluded.checked = true));
+                await save();
+                render();
+                $("#message").append(
+                  el(
+                    "p",
+                    "Excluded " + targets.length + " unmatched rows. They stay listed (and in history); untick Exclude on a row to bring it back.",
+                    "notice",
+                  ),
+                );
+              }),
+            );
+          only.checked = counts().printing + counts().unmatched + counts().other > 0;
+          only.onchange = applyFilter;
+          choices.updateSummary();
+          applyFilter();
           c.append(
             button("Save review", async () => {
               await save();
@@ -920,12 +1297,37 @@
             }),
             document.createTextNode(" "),
             button(
-              "Confirm and apply",
+              isReplace ? "Replace collection" : "Confirm and apply",
               async () => {
+                const n = counts();
+                const blocked = choices.filter((x) => !OK.includes(rowStatus(x)));
+                if (blocked.length) {
+                  only.checked = true;
+                  applyFilter();
+                  blocked[0].node.scrollIntoView({ block: "center" });
+                  throw Error(
+                    blocked.length + " of " + choices.length + " rows still need attention (" +
+                      [n.unmatched + " unmatched", n.printing + " need a printing", n.other + " with warnings"].join(", ") +
+                      "). Showing them now, starting with row " + (blocked[0].index + 1) +
+                      ": choose a printing or exclude the row.",
+                  );
+                }
                 await save();
+                const diff = current.replaceDiff;
+                if (isReplace) {
+                  if (!diff || diff.refusal) throw Error(diff?.refusal || "Nothing to replace with");
+                  if (diff.needsRemovalAcknowledgement && !(removal && removal.checked))
+                    throw Error("Press Save review, then acknowledge the large removal");
+                }
                 await api("/imports/" + item.id + "/confirm", "POST", {
                   revision: current.revision,
                   acknowledgeDuplicate: duplicate.checked,
+                  ...(isReplace
+                    ? {
+                        acknowledgeRemoval: Boolean(removal && removal.checked),
+                        expectedChange: { added: diff.copies.added, removed: diff.copies.removed },
+                      }
+                    : {}),
                 });
                 current = await api("/imports/" + item.id);
                 await load();

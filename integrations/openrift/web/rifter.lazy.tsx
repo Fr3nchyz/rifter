@@ -65,7 +65,7 @@ function RifterWorkspace() {
           if (!open) openTool("");
         }}
       >
-        <DialogContent className="flex h-[90dvh] max-w-5xl flex-col gap-2 overflow-hidden p-4 sm:p-5">
+        <DialogContent className="flex h-[92dvh] w-[96vw] max-w-[96vw] flex-col sm:w-[min(1100px,96vw)] sm:max-w-[1100px] gap-2 overflow-hidden p-4 sm:p-5">
           <DialogHeader>
             <DialogTitle>{tool ? toolTitles[tool] : "Collection tools"}</DialogTitle>
             <DialogDescription>
